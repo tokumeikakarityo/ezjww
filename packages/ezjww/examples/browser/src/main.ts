@@ -65,6 +65,10 @@ type TextHit = {
 let textHits: TextHit[] = [];
 let selectedTextIndex: number | null = null;
 let tapCandidate: { id: number; x: number; y: number; valid: boolean } | null = null;
+// V014: preview-only edits. DXF export remains the original conversion.
+type TextChange = { index: number; before: string; after: string };
+const textUndoStack: TextChange[] = [];
+const textRedoStack: TextChange[] = [];
 
 app.innerHTML = `
   <header class="topbar">
@@ -80,7 +84,7 @@ app.innerHTML = `
       <label class="toggle">JWCの座標
         <select id="coordinate-select"><option value="paper_millimeters">紙上mm</option><option value="model_millimeters">実寸mm</option></select>
       </label>
-      <button id="download-button" class="tool-button" type="button" disabled>DXF保存</button>
+      <button id="download-button" class="tool-button" type="button" disabled>DXF保存（原図）</button>
       <button id="sample-button" class="tool-button" type="button">サンプル読込</button>
       <button id="create-button" class="tool-button" type="button">JWW作成例</button>
       <button id="download-jww-button" class="tool-button" type="button" disabled>生成JWW保存</button>
@@ -137,7 +141,18 @@ app.innerHTML = `
           V013：補助線色・補助線種は常時非表示。ほかの線種を再現します。
         </div>
         <div id="text-selection-status" class="text-selection-status" role="status" aria-live="polite">
-          V011：図面を拡大し、文字をタップすると内容とレイヤを表示します（選択のみ）。
+          V014：文字をタップすると文字を選択できます。
+        </div>
+        <div id="text-edit-panel" class="text-edit-panel" hidden>
+          <label for="text-edit-input">選択文字を変更（画面上のみ）</label>
+          <input id="text-edit-input" type="text" placeholder="図面の文字を選択してください" autocomplete="off" autocapitalize="off" spellcheck="false" disabled />
+          <div class="text-edit-actions">
+            <button id="text-edit-apply" type="button" disabled>文字変更</button>
+            <button id="text-edit-undo" type="button" disabled>元に戻す</button>
+            <button id="text-edit-redo" type="button" disabled>やり直す</button>
+            <button id="text-edit-clear" type="button" disabled>選択解除</button>
+          </div>
+          <div id="text-edit-note" class="text-edit-note">変更はプレビュー専用です。JWWとDXF保存は元データのままです。</div>
         </div>
       </div>
       <canvas id="preview-canvas" class="preview" width="1200" height="760"></canvas>
@@ -156,6 +171,13 @@ const coordinateSelect = document.querySelector<HTMLSelectElement>("#coordinate-
 const downloadButton = document.querySelector<HTMLButtonElement>("#download-button")!;
 const createButton = document.querySelector<HTMLButtonElement>("#create-button")!;
 const downloadJwwButton = document.querySelector<HTMLButtonElement>("#download-jww-button")!;
+const textEditPanel = document.querySelector<HTMLDivElement>("#text-edit-panel")!;
+const textEditInput = document.querySelector<HTMLInputElement>("#text-edit-input")!;
+const textEditApply = document.querySelector<HTMLButtonElement>("#text-edit-apply")!;
+const textEditUndo = document.querySelector<HTMLButtonElement>("#text-edit-undo")!;
+const textEditRedo = document.querySelector<HTMLButtonElement>("#text-edit-redo")!;
+const textEditClear = document.querySelector<HTMLButtonElement>("#text-edit-clear")!;
+const textEditNote = document.querySelector<HTMLDivElement>("#text-edit-note")!;
 
 const zoomLevel = document.querySelector<HTMLSpanElement>("#zoom-level")!;
 function redrawZoom(): void {
@@ -266,6 +288,23 @@ document.querySelector<HTMLSelectElement>("#point-size-select")!.addEventListene
 });
 document.querySelector<HTMLSelectElement>("#line-style-select")!.addEventListener("change", e => {
   showJwwLineTypes = (e.currentTarget as HTMLSelectElement).value === "original";
+  redrawZoom();
+});
+// Keep editing separate from the gesture controls and the original DXF exporter.
+textEditInput.addEventListener("input", updateTextEditControls);
+textEditInput.addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    applyTextEdit();
+    textEditInput.blur();
+  }
+});
+textEditApply.addEventListener("click", applyTextEdit);
+textEditUndo.addEventListener("click", undoTextEdit);
+textEditRedo.addEventListener("click", redoTextEdit);
+textEditClear.addEventListener("click", () => {
+  selectedTextIndex = null;
+  syncTextEditPanel();
   redrawZoom();
 });
 
@@ -429,6 +468,8 @@ async function createDrawing(): Promise<void> {
 async function parseBytes(input: CurrentInput): Promise<void> {
   selectedTextIndex = null;
   textHits = [];
+  textUndoStack.length = 0;
+  textRedoStack.length = 0;
   statusLine.textContent = "読込中";
   try {
     await ensureWasm();
@@ -478,6 +519,7 @@ function render(): void {
   coordinateSelect.disabled = parsedState?.cad.format !== "jwc";
   renderPreview(parsedState);
   renderDetail(parsedState);
+  syncTextEditPanel();
 }
 
 function renderMetrics(state: ParsedState | null): void {
@@ -666,6 +708,9 @@ function drawDxf(
     if (entity.type === "TEXT" && isJwc) widths.set(entity, dxf.text_width_factors?.[textIndex++] ?? 1);
   }
   const visible = dxf.entities.filter(entity => !hidden.has(entity.layer));
+  // Preserve the original entity index despite layer filtering.
+  const visibleIndices = dxf.entities.flatMap((entity, index) =>
+    hidden.has(entity.layer) ? [] : [index]);
   // ezjww supplies real JWW line-style definitions as DXF LTYPE patterns.
   // These are in paper millimetres: positive=ink, negative=gap.
   const definedLineTypes = new Map(dxf.line_types.map(t => [t.name.toUpperCase(), t.pattern] as const));
@@ -727,7 +772,7 @@ function drawDxf(
       context.restore();
       const centerX=width/2,centerY=height/2;
       textHits.push({
-        index,content:entity.content,layer:entity.layer,
+        index:visibleIndices[index],content:entity.content,layer:entity.layer,
         x:centerX+viewPanX+(baseX-centerX)*viewZoom,
         y:centerY+viewPanY+(baseY-centerY)*viewZoom,
         width:Math.max(0.5,measuredWidth*viewZoom),
@@ -896,12 +941,12 @@ function updateTextSelectionStatus():void {
   const el=document.querySelector<HTMLDivElement>("#text-selection-status")!;
   const selected=selectedHit();
   if(selected) {
-    el.textContent="選択文字: 「"+selected.content+"」 / レイヤ: "+selected.layer+
-      "（JWW→DXF表示上の文字。編集・保存は未実装）";
+    el.textContent="V014 選択文字: 「"+selected.content+"」 / レイヤ: "+selected.layer+
+      " / 画面変更 "+textUndoStack.length+"件";
   } else {
     el.textContent=parsedState
-      ? "V011：文字候補 "+textHits.length+"件。拡大して文字をタップしてください（選択のみ）。"
-      : "V011：図面を開いて文字をタップしてください（選択のみ）。";
+      ? "V014：文字候補 "+textHits.length+"件。図面の文字をタップして選択してください。"
+      : "V014：図面を開くと文字を選択・変更できます。";
   }
 }
 function selectTextAt(point:{x:number,y:number}):void {
@@ -917,8 +962,78 @@ function selectTextAt(point:{x:number,y:number}):void {
     if(dist<=10 && dist<bestDistance) {best=t;bestDistance=dist;}
   }
   selectedTextIndex=best?.index ?? null;
+  syncTextEditPanel();
   redrawZoom();
 }
+
+/** V014: preview edit state is intentionally independent from source bytes. */
+function selectedTextEntity(): DxfEntity | null {
+  if (!parsedState || selectedTextIndex === null) return null;
+  const entity = parsedState.dxf.entities[selectedTextIndex];
+  return entity?.type === "TEXT" && typeof entity.content === "string" ? entity : null;
+}
+function updateTextEditControls(): void {
+  const entity = selectedTextEntity();
+  textEditApply.disabled = !entity ||
+    textEditInput.value.length === 0 || textEditInput.value === entity.content;
+  textEditUndo.disabled = textUndoStack.length === 0;
+  textEditRedo.disabled = textRedoStack.length === 0;
+  textEditClear.disabled = !entity;
+}
+function syncTextEditPanel(): void {
+  const entity = selectedTextEntity();
+  textEditPanel.hidden = !parsedState;
+  textEditInput.disabled = !entity;
+  textEditInput.value = entity?.content ?? "";
+  textEditNote.textContent = "表示用の文字変更：" + textUndoStack.length +
+    "件。元JWWとDXF保存データは変更しません。";
+  updateTextEditControls();
+}
+function applyTextEdit(): void {
+  const entity = selectedTextEntity();
+  if (!entity) return;
+  const after = textEditInput.value;
+  if (after.length === 0 || entity.content === after) return;
+  const change: TextChange = {
+    index: selectedTextIndex!, before: entity.content!, after,
+  };
+  textUndoStack.push(change);
+  textRedoStack.length = 0;
+  entity.content = after;
+  syncTextEditPanel();
+  redrawZoom();
+}
+function undoTextEdit(): void {
+  if (!parsedState) return;
+  const change = textUndoStack.pop();
+  if (!change) return;
+  const entity = parsedState.dxf.entities[change.index];
+  if (entity?.type !== "TEXT") {
+    textUndoStack.push(change);
+    return;
+  }
+  entity.content = change.before;
+  textRedoStack.push(change);
+  selectedTextIndex = change.index;
+  syncTextEditPanel();
+  redrawZoom();
+}
+function redoTextEdit(): void {
+  if (!parsedState) return;
+  const change = textRedoStack.pop();
+  if (!change) return;
+  const entity = parsedState.dxf.entities[change.index];
+  if (entity?.type !== "TEXT") {
+    textRedoStack.push(change);
+    return;
+  }
+  entity.content = change.after;
+  textUndoStack.push(change);
+  selectedTextIndex = change.index;
+  syncTextEditPanel();
+  redrawZoom();
+}
+
 function drawSelectedTextHighlight(ctx:CanvasRenderingContext2D):void {
   const t=selectedHit();
   if(!t)return;

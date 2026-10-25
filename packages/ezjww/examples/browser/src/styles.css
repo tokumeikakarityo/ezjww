@@ -470,3 +470,50 @@ h1 {
   font-size: 12px;
   line-height: 1.45;
 }
+
+
+/* V014: inline text editing while keeping the JWW file and original DXF immutable. */
+.text-edit-panel {
+  flex-basis: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border: 1px solid #b6c8d8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fbff;
+}
+.text-edit-panel[hidden] { display: none; }
+.text-edit-panel label {
+  color: #304560;
+  font-size: 13px;
+  font-weight: 700;
+}
+#text-edit-input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 42px;
+  padding: 8px 10px;
+  background: #fff;
+  color: #1f2937;
+  border-radius: 7px;
+  border: 1px solid #9bacc1;
+  font-size: 16px; /* prevent Safari auto zoom on focus */
+}
+#text-edit-input:disabled { background: #f2f4f8; }
+.text-edit-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.text-edit-actions button {
+  min-height: 40px;
+  padding: 6px 12px;
+  background: #fff;
+  border: 1px solid #aeb7c5;
+  border-radius: 8px;
+  color: #253d58;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+.text-edit-actions button:disabled { opacity: 0.4; }
+.text-edit-note { font-size: 12px; line-height: 1.5; color: #725335; }
