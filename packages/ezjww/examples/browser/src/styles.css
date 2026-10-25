@@ -793,3 +793,36 @@ h1 {
   .cad-share-panel { width: calc(100% - 20px); padding: 10px; }
   .cad-share-actions button { flex: 1 1 auto; }
 }
+
+
+/* V024: compact paper selection and explicit PDF save/share actions. */
+.cad-pdf-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 7px;
+  padding: 11px 0;
+  margin-top: 11px;
+  border-top: 1px solid #cfdae5;
+  border-bottom: 1px solid #cfdae5;
+}
+.cad-pdf-settings > strong { font-size: 15px; color: #1a3c5a; }
+.cad-pdf-settings > label { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+.cad-pdf-settings select {
+  min-height: 40px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 16px;
+  color: #1f2937;
+  background: #ffffff;
+  border: 1px solid #a9bfd3;
+  border-radius: 8px;
+}
+.cad-pdf-settings .cad-pdf-hint {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: #526477;
+  line-height: 1.5;
+}
+.cad-pdf-settings .cad-share-actions { flex-basis: 100%; margin-top: 2px; }
