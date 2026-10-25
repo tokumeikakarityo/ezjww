@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
+  <rect width="180" height="180" rx="38" fill="#123956"/>
+  <rect x="18" y="18" width="144" height="144" rx="20" fill="#174866" stroke="#67c9ed" stroke-width="4"/>
+  <path d="M34 50H147 M34 80H147 M34 110H147 M50 34V147 M80 34V147 M110 34V147" stroke="#4e83a0" stroke-width="2" opacity=".48"/>
+  <path d="M40 130V48H132 M40 77H140" fill="none" stroke="#81def2" stroke-width="7" stroke-linecap="square" stroke-linejoin="round"/>
+  <text x="90" y="122" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="45" fill="white">JW</text>
+</svg>

@@ -8,6 +8,8 @@ on:
       - 'packages/ezjww/examples/browser/src/main.ts'
       - 'crates/ezjww-wasm/src/lib.rs'
       - 'packages/ezjww/examples/browser/src/styles.css'
+      - 'packages/ezjww/examples/browser/index.html'
+      - 'packages/ezjww/examples/browser/public/**'
 
 permissions:
   contents: read
