@@ -141,14 +141,16 @@ app.innerHTML = `
             </select>
           </label>
         </div>
-        <div id="line-style-status" class="line-style-status" role="status">
-          V013：補助線色・補助線種は常時非表示。ほかの線種を再現します。
-        </div>
-        <div id="text-selection-status" class="text-selection-status" role="status" aria-live="polite">
-          V014：文字をタップすると文字を選択できます。
-        </div>
+      </div>
+      <div id="drawing-stage" class="drawing-stage">
+        <canvas id="preview-canvas" class="preview" width="1200" height="760"></canvas>
+        <button id="canvas-fit-button" class="canvas-fit-button" type="button" aria-label="図面全体を表示">全体 ↺</button>
         <div id="text-edit-panel" class="text-edit-panel" hidden>
-          <label for="text-edit-input">選択文字を変更（画面上のみ）</label>
+          <div class="editor-heading"><label for="text-edit-input">文字編集</label><button id="text-edit-close" type="button" aria-label="編集を閉じる">×</button></div>
+          <div id="text-selection-status" class="text-selection-status" role="status" aria-live="polite">
+            V014：文字をタップすると文字を選択できます。
+          </div>
+          <label for="text-edit-input">選択文字を変更</label>
           <input id="text-edit-input" type="text" placeholder="図面の文字を選択してください" autocomplete="off" autocapitalize="off" spellcheck="false" disabled />
           <div class="text-edit-actions">
             <button id="text-edit-apply" type="button" disabled>文字変更</button>
@@ -158,11 +160,18 @@ app.innerHTML = `
           </div>
           <div id="text-edit-note" class="text-edit-note">変更はプレビュー専用です。JWWとDXF保存は元データのままです。</div>
         </div>
+
       </div>
-      <canvas id="preview-canvas" class="preview" width="1200" height="760"></canvas>
+      <details class="preview-diagnostics">
+        <summary>線種などの表示情報</summary>
+        <div id="line-style-status" class="line-style-status" role="status">
+          V013：補助線色・補助線種は常時非表示。ほかの線種を再現します。
+        </div>
+      </details>
       <div id="detail" class="detail"></div>
     </section>
   </main>
+  <button id="floating-fit-button" class="floating-fit-button" type="button" hidden aria-label="いつでも図面を全体表示">全体 ↺</button>
 `;
 
 const fileInput = document.querySelector<HTMLInputElement>("#file-input")!;
@@ -183,6 +192,9 @@ const textEditUndo = document.querySelector<HTMLButtonElement>("#text-edit-undo"
 const textEditRedo = document.querySelector<HTMLButtonElement>("#text-edit-redo")!;
 const textEditClear = document.querySelector<HTMLButtonElement>("#text-edit-clear")!;
 const textEditNote = document.querySelector<HTMLDivElement>("#text-edit-note")!;
+const textEditClose = document.querySelector<HTMLButtonElement>("#text-edit-close")!;
+const floatingFitButton = document.querySelector<HTMLButtonElement>("#floating-fit-button")!;
+const canvasFitButton = document.querySelector<HTMLButtonElement>("#canvas-fit-button")!;
 
 const zoomLevel = document.querySelector<HTMLSpanElement>("#zoom-level")!;
 function redrawZoom(): void {
@@ -283,9 +295,13 @@ document.querySelector<HTMLButtonElement>("#zoom-in")!.addEventListener("click",
 document.querySelector<HTMLButtonElement>("#zoom-out")!.addEventListener("click",()=>{
   const r=canvas.getBoundingClientRect();zoomAt(1/1.5,{x:r.width/2,y:r.height/2});
 });
-document.querySelector<HTMLButtonElement>("#zoom-fit")!.addEventListener("click",()=>{
-  resetZoom();redrawZoom();
-});
+function fitWholeDrawing(): void {
+  resetZoom();
+  redrawZoom();
+}
+document.querySelector<HTMLButtonElement>("#zoom-fit")!.addEventListener("click", fitWholeDrawing);
+floatingFitButton.addEventListener("click", fitWholeDrawing);
+canvasFitButton.addEventListener("click", fitWholeDrawing);
 // Display-only option: neither JWW bytes nor CAD coordinate attributes are modified.
 document.querySelector<HTMLSelectElement>("#point-size-select")!.addEventListener("change", e => {
   pointDisplayRadius = Number((e.currentTarget as HTMLSelectElement).value);
@@ -307,11 +323,13 @@ textEditInput.addEventListener("keydown", event => {
 textEditApply.addEventListener("click", applyTextEdit);
 textEditUndo.addEventListener("click", undoTextEdit);
 textEditRedo.addEventListener("click", redoTextEdit);
-textEditClear.addEventListener("click", () => {
+function closeTextEditor(): void {
   selectedTextIndex = null;
   syncTextEditPanel();
   redrawZoom();
-});
+}
+textEditClear.addEventListener("click", closeTextEditor);
+textEditClose.addEventListener("click", closeTextEditor);
 
 createButton.addEventListener("click", () => { void createDrawing(); });
 downloadJwwButton.addEventListener("click", () => {
@@ -379,6 +397,7 @@ downloadEditedDxf.addEventListener("click", () => {
   }
 });
 
+window.addEventListener("resize", redrawZoom);
 void ensureWasm().then(() => {
   statusLine.textContent = "待機中";
 });
@@ -564,6 +583,8 @@ function render(): void {
   downloadEditedDxf.disabled = !parsedState || parsedState.cad.format !== "jww" || effectiveTextChanges().length === 0;
   downloadJwwButton.disabled = !parsedState?.generatedJww;
   coordinateSelect.disabled = parsedState?.cad.format !== "jwc";
+  floatingFitButton.hidden = !parsedState;
+  canvasFitButton.hidden = !parsedState;
   renderPreview(parsedState);
   renderDetail(parsedState);
   syncTextEditPanel();
@@ -1030,7 +1051,7 @@ function updateTextEditControls(): void {
 }
 function syncTextEditPanel(): void {
   const entity = selectedTextEntity();
-  textEditPanel.hidden = !parsedState;
+  textEditPanel.hidden = !entity;
   textEditInput.disabled = !entity;
   textEditInput.value = entity?.content ?? "";
   textEditNote.textContent = "変更履歴：" + textUndoStack.length +

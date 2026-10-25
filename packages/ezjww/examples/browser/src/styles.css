@@ -517,3 +517,156 @@ h1 {
 }
 .text-edit-actions button:disabled { opacity: 0.4; }
 .text-edit-note { font-size: 12px; line-height: 1.5; color: #725335; }
+
+
+/* V016 mobile viewport layout: drawing and controls first. */
+.drawing-stage {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  overflow: hidden;
+  isolation: isolate;
+  border-radius: 8px;
+}
+.drawing-stage .preview {
+  display: block;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  max-width: 100%;
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+.canvas-fit-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  padding: 7px 13px;
+  min-height: 42px;
+  border: 1px solid #a0b4c9;
+  border-radius: 9px;
+  background: rgba(255,255,255,.94);
+  color: #1b3a5b;
+  font-weight: 750;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12);
+  touch-action: manipulation;
+}
+.canvas-fit-button[hidden],
+.floating-fit-button[hidden] { display: none !important; }
+.floating-fit-button {
+  position: fixed;
+  bottom: calc(94px + env(safe-area-inset-bottom, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  z-index: 30;
+  min-height: 46px;
+  min-width: 78px;
+  padding: 8px 15px;
+  color: #fff;
+  background: #164c78;
+  border: 1px solid rgba(255,255,255,.65);
+  box-shadow: 0 3px 16px rgba(0,0,0,.23);
+  border-radius: 999px;
+  font: inherit;
+  font-weight: 760;
+  touch-action: manipulation;
+}
+.preview-diagnostics {
+  min-width: 0;
+  width: 100%;
+  font-size: 12px;
+  border: 1px solid #c9ced8;
+  background: #fbfcfe;
+  border-radius: 8px;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+.preview-diagnostics summary { cursor: pointer; font-size: 13px; color: #526075; }
+.preview-diagnostics .line-style-status { margin-top: 8px; }
+.text-edit-panel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  left: 8px;
+  z-index: 5;
+  max-height: min(65%, 340px);
+  overflow-y: auto;
+  background: rgba(250,252,255,.98);
+  box-shadow: 0 6px 26px rgba(0,0,0,.24);
+  -webkit-overflow-scrolling: touch;
+}
+.editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.editor-heading button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  background: #fff;
+  border: 1px solid #aeb7c5;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 23px;
+  touch-action: manipulation;
+}
+.right-pane,
+.preview-head,
+.preview-zoom-controls {
+  min-width: 0;
+  max-width: 100%;
+}
+#preview-meta { overflow-wrap: anywhere; }
+
+@media (max-width: 860px) {
+  .shell {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 10px;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+  .right-pane {
+    order: -1;
+    width: 100%;
+    max-width: 100%;
+    grid-template-rows: auto minmax(360px, min(65dvh, 560px)) auto auto;
+    gap: 8px;
+  }
+  .left-pane { order: 1; width: 100%; max-width: 100%; }
+  .preview-head {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 7px;
+    padding: 8px;
+  }
+  .preview-zoom-controls {
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+  .preview-zoom-controls button { min-height: 38px; min-width: 40px; }
+  .topbar { padding: 9px 12px; gap: 8px; }
+  .topbar h1 { font-size: 18px; }
+  .actions { gap: 6px; }
+  .actions .file-button { order: -2; }
+  .actions #download-edited-dxf { order: -1; }
+  .preview-diagnostics { order: 3; }
+}
+@media (max-width: 520px) {
+  .right-pane { grid-template-rows: auto 54dvh auto auto; }
+  .drawing-stage { min-height: 340px; }
+  .preview-zoom-controls { font-size: 13px; }
+  .preview-zoom-controls button { padding: 3px 8px; }
+  .text-edit-panel {
+    top: 6px;
+    left: 6px;
+    right: 6px;
+    padding: 9px;
+    max-height: min(70%, 330px);
+  }
+  .text-edit-actions button { padding: 5px 8px; font-size: 13px; }
+}
