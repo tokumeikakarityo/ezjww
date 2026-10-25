@@ -121,7 +121,6 @@ app.innerHTML = `
           <button id="zoom-out" type="button">－</button>
           <span id="zoom-level">100%</span>
           <button id="zoom-in" type="button">＋</button>
-          <button id="zoom-fit" type="button">全体</button>
           <label class="point-size-control">線種
             <select id="line-style-select" aria-label="線種表示">
               <option value="original" selected>原図</option>
@@ -132,7 +131,6 @@ app.innerHTML = `
       </div>
       <div id="drawing-stage" class="drawing-stage">
         <canvas id="preview-canvas" class="preview" width="1200" height="760"></canvas>
-        <button id="canvas-fit-button" class="canvas-fit-button" type="button" aria-label="図面全体を表示">全体 ↺</button>
         <div id="text-edit-panel" class="text-edit-panel" hidden>
           <div class="editor-heading"><label for="text-edit-input">文字編集</label><button id="text-edit-close" type="button" aria-label="編集を閉じる">×</button></div>
           <div id="text-selection-status" class="text-selection-status" role="status" aria-live="polite">
@@ -185,7 +183,6 @@ const textEditClear = document.querySelector<HTMLButtonElement>("#text-edit-clea
 const textEditNote = document.querySelector<HTMLDivElement>("#text-edit-note")!;
 const textEditClose = document.querySelector<HTMLButtonElement>("#text-edit-close")!;
 const floatingFitButton = document.querySelector<HTMLButtonElement>("#floating-fit-button")!;
-const canvasFitButton = document.querySelector<HTMLButtonElement>("#canvas-fit-button")!;
 
 const zoomLevel = document.querySelector<HTMLSpanElement>("#zoom-level")!;
 function redrawZoom(): void {
@@ -290,9 +287,7 @@ function fitWholeDrawing(): void {
   resetZoom();
   redrawZoom();
 }
-document.querySelector<HTMLButtonElement>("#zoom-fit")!.addEventListener("click", fitWholeDrawing);
 floatingFitButton.addEventListener("click", fitWholeDrawing);
-canvasFitButton.addEventListener("click", fitWholeDrawing);
 document.querySelector<HTMLSelectElement>("#line-style-select")!.addEventListener("change", e => {
   showJwwLineTypes = (e.currentTarget as HTMLSelectElement).value === "original";
   redrawZoom();
@@ -570,7 +565,6 @@ function render(): void {
   downloadJwwButton.disabled = !parsedState?.generatedJww;
   coordinateSelect.disabled = parsedState?.cad.format !== "jwc";
   floatingFitButton.hidden = !parsedState;
-  canvasFitButton.hidden = !parsedState;
   renderPreview(parsedState);
   renderDetail(parsedState);
   syncTextEditPanel();
@@ -822,7 +816,7 @@ function drawDxf(
       const widthFactor = textWidthFactorFor(entity,widths.get(entity));
       context.save();
       context.font = fontHeight + "px sans-serif";
-      const measuredWidth = context.measureText(entity.content).width * widthFactor;
+      const measuredWidth = measureJwCadText(context, entity.content).width * widthFactor;
       context.restore();
       const centerX=width/2,centerY=height/2;
       textHits.push({
@@ -983,12 +977,61 @@ function drawEntity(
     context.font = `${Math.max(0.1, (entity.height ?? 2.5) * scale)}px sans-serif`;
     context.textAlign = "left";
     context.textBaseline = "alphabetic";
-    context.fillText(entity.content ?? "", 0, 0);
+    drawJwCadText(context, entity.content ?? "");
     context.restore();
     return;
   }
 }
 
+
+
+/**
+ * Jw_cad's terminal middle dots are JUSTIFICATION instructions, not printed
+ * punctuation. Each terminal fullwidth "・" adds one fullwidth advance, and
+ * a final halfwidth "･" adds 1/2 advance, spread between visible glyphs.
+ *
+ * Examples: "土台継手部・" -> wider evenly spaced "土台継手部".
+ * Internal dots remain literal. A trailing space also keeps the dot literal.
+ * Only the preview canvas is changed; raw JWW and edited DXF text remain intact.
+ */
+interface JwCadTextLayout {
+  visibleText: string;
+  glyphs: string[];
+  gap: number;
+  width: number;
+  justified: boolean;
+}
+function measureJwCadText(context: CanvasRenderingContext2D, raw: string): JwCadTextLayout {
+  const suffix = /(?:・+･?|･)$/u.exec(raw)?.[0];
+  const visible = suffix ? raw.slice(0, -suffix.length) : raw;
+  const glyphs = Array.from(visible);
+  if (!suffix || glyphs.length < 1) {
+    return { visibleText: raw, glyphs: Array.from(raw), gap: 0,
+      width: context.measureText(raw).width, justified: false };
+  }
+  const extraFull = Array.from(suffix).filter(ch => ch === "・").length;
+  const extraHalf = suffix.endsWith("･") ? 0.5 : 0;
+  const fullAdvance = context.measureText("あ").width;
+  const extraWidth = (extraFull + extraHalf) * fullAdvance;
+  // With one character there are no inter-character gaps; suppress control
+  // suffix but do not invent a location for the added blank.
+  const gap = glyphs.length > 1 ? extraWidth / (glyphs.length - 1) : 0;
+  const normalWidth = glyphs.reduce((total, ch) => total + context.measureText(ch).width, 0);
+  return { visibleText: visible, glyphs, gap,
+    width: normalWidth + gap * (glyphs.length - 1), justified: true };
+}
+function drawJwCadText(context: CanvasRenderingContext2D, raw: string): void {
+  const layout = measureJwCadText(context, raw);
+  if (!layout.justified) {
+    context.fillText(raw, 0, 0);
+    return;
+  }
+  let x = 0;
+  for (const ch of layout.glyphs) {
+    context.fillText(ch, x, 0);
+    x += context.measureText(ch).width + layout.gap;
+  }
+}
 
 function textWidthFactorFor(entity:DxfEntity, fromJwc?:number):number {
   const f=fromJwc ?? entity.width_factor ?? 1;
