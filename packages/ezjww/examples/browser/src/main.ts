@@ -50,6 +50,7 @@ let jwcCoordinates: JwcCoordinateSpace = "paper_millimeters";
 let viewZoom = 1, viewPanX = 0, viewPanY = 0, redrawQueued = false;
 // Preview-only POINT display size in CSS pixels at 100% zoom.
 let pointDisplayRadius = 1.2;
+let showJwwLineTypes = true;
 const pointers = new Map<number, {x:number,y:number}>();
 type Gesture = {mode:"pan"; origin:{x:number,y:number}; panX:number; panY:number}
   | {mode:"pinch"; distance:number; zoom:number; anchor:{x:number,y:number}};
@@ -125,6 +126,15 @@ app.innerHTML = `
               <option value="2">大</option>
             </select>
           </label>
+          <label class="point-size-control">線種
+            <select id="line-style-select" aria-label="線種表示">
+              <option value="original" selected>原図</option>
+              <option value="solid">実線で表示</option>
+            </select>
+          </label>
+        </div>
+        <div id="line-style-status" class="line-style-status" role="status">
+          V012：JWW線種を原図の設定に沿って表示します。
         </div>
         <div id="text-selection-status" class="text-selection-status" role="status" aria-live="polite">
           V011：図面を拡大し、文字をタップすると内容とレイヤを表示します（選択のみ）。
@@ -252,6 +262,10 @@ document.querySelector<HTMLButtonElement>("#zoom-fit")!.addEventListener("click"
 // Display-only option: neither JWW bytes nor CAD coordinate attributes are modified.
 document.querySelector<HTMLSelectElement>("#point-size-select")!.addEventListener("change", e => {
   pointDisplayRadius = Number((e.currentTarget as HTMLSelectElement).value);
+  redrawZoom();
+});
+document.querySelector<HTMLSelectElement>("#line-style-select")!.addEventListener("change", e => {
+  showJwwLineTypes = (e.currentTarget as HTMLSelectElement).value === "original";
   redrawZoom();
 });
 
@@ -559,6 +573,8 @@ function renderPreview(state: ParsedState | null): void {
   if (!state) {
     meta.textContent = "No drawing";
     textHits = [];
+    document.querySelector<HTMLDivElement>("#line-style-status")!.textContent =
+      "V012：図面を開くと線種を再現します。";
     updateTextSelectionStatus();
     drawEmptyPreview(context, rect.width, rect.height);
     return;
@@ -648,6 +664,12 @@ function drawDxf(
     if (entity.type === "TEXT" && isJwc) widths.set(entity, dxf.text_width_factors?.[textIndex++] ?? 1);
   }
   const visible = dxf.entities.filter(entity => !hidden.has(entity.layer));
+  // ezjww supplies real JWW line-style definitions as DXF LTYPE patterns.
+  // These are in paper millimetres: positive=ink, negative=gap.
+  const definedLineTypes = new Map(dxf.line_types.map(t => [t.name.toUpperCase(), t.pattern] as const));
+  const layersByName = new Map(dxf.layers.map(layer => [layer.name, layer] as const));
+  let patternedCount = 0;
+  let unknownCount = 0;
   const bounds = dxfBounds(visible, context, widths);
   if (!bounds) {
     drawEmptyPreview(context, width, height);
@@ -681,8 +703,17 @@ function drawDxf(
     context.strokeStyle = isJwc ? ({132: "#00a5a5", 18: "#260000", 92: "#00a500", 52: "#a5a500", 212: "#a500a5"} as Record<number, string>)[entity.color] ?? colorFor(entity.color) : colorFor(entity.color);
     context.fillStyle = context.strokeStyle;
     context.lineWidth = 1.2 / viewZoom;
-    const dash = entity.line_type === "JWC_DASHED1" ? 1.25 : entity.line_type === "JWC_DASHED2" ? 2.5 : 0;
-    context.setLineDash(dash ? [dash * scale, dash * scale] : []);
+    if (entity.type === "LINE" || entity.type === "ARC" ||
+        entity.type === "CIRCLE" || entity.type === "ELLIPSE") {
+      const lineStyle = findLineStyle(entity, definedLineTypes, layersByName);
+      if (lineStyle.pattern && lineStyle.pattern.length >= 2) patternedCount += 1;
+      if (lineStyle.unresolved) unknownCount += 1;
+      context.setLineDash(showJwwLineTypes && lineStyle.pattern
+        ? previewDashPattern(lineStyle.pattern, scale, viewZoom) : []);
+    } else {
+      // Solids, points and labels must not inherit the previous line's dash.
+      context.setLineDash([]);
+    }
     drawEntity(context, entity, toScreen, scale, widths.get(entity));
     if (entity.type === "TEXT" && hasNumbers(entity, "x", "y") && entity.content) {
       const [baseX,baseY] = toScreen(entity.x,entity.y);
@@ -704,8 +735,64 @@ function drawDxf(
     }
   }
   context.restore();
+  document.querySelector<HTMLDivElement>("#line-style-status")!.textContent =
+    "V012 線種：" + (showJwwLineTypes ? "原図表示" : "すべて実線") +
+    " / 破線・鎖線等 " + patternedCount.toLocaleString("ja-JP") + "要素" +
+    " / 線種定義 " + dxf.line_types.length + "種類" +
+    (unknownCount ? " / 未解決 " + unknownCount + "要素" : "");
   drawSelectedTextHighlight(context);
   updateTextSelectionStatus();
+}
+
+
+/**
+ * DXF LTYPE patterns from ezjww are alternating signed millimetres on paper.
+ * Keep real ratios and zoom with the CAD view; mildly exaggerate very short
+ * segments to avoid solid-looking chain lines on a phone at overall fit.
+ * This changes canvas appearance only, never JWW data or exported DXF.
+ */
+type PreviewLineStyle = { pattern: number[] | null; unresolved: boolean };
+const knownLinePatterns: Record<string, number[]> = {
+  DASHED: [0.6, -0.3],
+  JWC_DASHED1: [1.25, -1.25],
+  JWC_DASHED2: [2.5, -2.5],
+  JWC_DASHED3: [0.6, -0.6],
+  JWC_DASHDOT1: [7.5, -1.25, 1.25, -1.25],
+  JWC_DASHDOT2: [12.5, -2.5, 2.5, -2.5],
+  JWC_DIVIDE1: [7.5, -1.25, 1.25, -1.25, 1.25, -1.25],
+};
+
+function findLineStyle(
+  entity: DxfEntity,
+  definitions: Map<string, number[]>,
+  layers: Map<string, { line_type: string }>,
+): PreviewLineStyle {
+  let name = (entity.line_type || "BYLAYER").toUpperCase();
+  if (name === "BYLAYER") {
+    name = (layers.get(entity.layer)?.line_type || "CONTINUOUS").toUpperCase();
+  }
+  if (name === "CONTINUOUS" || name === "BYBLOCK" || name === "BYLAYER" || !name) {
+    return { pattern: null, unresolved: false };
+  }
+  const pattern = definitions.get(name) ?? knownLinePatterns[name];
+  if (!pattern) return { pattern: null, unresolved: true };
+  if (pattern.length < 2 || !pattern.every(Number.isFinite)) {
+    return { pattern: null, unresolved: false };
+  }
+  return { pattern, unresolved: false };
+}
+
+function previewDashPattern(
+  pattern: number[], baseScale: number, zoom: number,
+): number[] {
+  const lengths = pattern.map(v => Math.abs(v)).filter(v => v > 1e-9);
+  if (!lengths.length) return [];
+  const smallest = Math.min(...lengths) * baseScale * zoom;
+  const largest = Math.max(...lengths) * baseScale * zoom;
+  // Minimum legibility ~1.5 CSS px; cap the longest segment at 72 CSS px.
+  const boost = Math.min(1.5 / Math.max(smallest, 1e-9), 72 / Math.max(largest, 1e-9));
+  const factor = Math.max(0.01, boost < 1 ? boost : Math.max(1, boost));
+  return pattern.map(mm => mm === 0 ? 0.6 / zoom : Math.max(0.03, Math.abs(mm) * baseScale * factor));
 }
 
 function drawEntity(
