@@ -48,6 +48,8 @@ let viewMode: ViewMode = "summary";
 let explodeInserts = true;
 let jwcCoordinates: JwcCoordinateSpace = "paper_millimeters";
 let viewZoom = 1, viewPanX = 0, viewPanY = 0, redrawQueued = false;
+// Preview-only POINT display size in CSS pixels at 100% zoom.
+let pointDisplayRadius = 1.2;
 const pointers = new Map<number, {x:number,y:number}>();
 type Gesture = {mode:"pan"; origin:{x:number,y:number}; panX:number; panY:number}
   | {mode:"pinch"; distance:number; zoom:number; anchor:{x:number,y:number}};
@@ -116,6 +118,13 @@ app.innerHTML = `
           <span id="zoom-level">100%</span>
           <button id="zoom-in" type="button">＋</button>
           <button id="zoom-fit" type="button">全体</button>
+          <label class="point-size-control">点の表示
+            <select id="point-size-select" aria-label="点の表示サイズ">
+              <option value="0.75">小</option>
+              <option value="1.2" selected>標準</option>
+              <option value="2">大</option>
+            </select>
+          </label>
         </div>
         <div id="text-selection-status" class="text-selection-status" role="status" aria-live="polite">
           V011：図面を拡大し、文字をタップすると内容とレイヤを表示します（選択のみ）。
@@ -239,6 +248,11 @@ document.querySelector<HTMLButtonElement>("#zoom-out")!.addEventListener("click"
 });
 document.querySelector<HTMLButtonElement>("#zoom-fit")!.addEventListener("click",()=>{
   resetZoom();redrawZoom();
+});
+// Display-only option: neither JWW bytes nor CAD coordinate attributes are modified.
+document.querySelector<HTMLSelectElement>("#point-size-select")!.addEventListener("change", e => {
+  pointDisplayRadius = Number((e.currentTarget as HTMLSelectElement).value);
+  redrawZoom();
 });
 
 createButton.addEventListener("click", () => { void createDrawing(); });
@@ -754,7 +768,12 @@ function drawEntity(
   if (entity.type === "POINT" && hasNumbers(entity, "x", "y")) {
     const [x, y] = toScreen(entity.x, entity.y);
     context.beginPath();
-    context.arc(x, y, 2.4, 0, Math.PI * 2);
+    // POINT glyphs are drawn under the canvas zoom transform.
+    // Use zoom-aware inverse radius, allowing modest growth but capping
+    // visual size so dimension markers do not obscure nearby annotations.
+    const screenRadius = Math.min(3.2,
+      Math.max(0.55, pointDisplayRadius * Math.sqrt(viewZoom)));
+    context.arc(x, y, screenRadius / viewZoom, 0, Math.PI * 2);
     context.fill();
     return;
   }

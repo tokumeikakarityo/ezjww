@@ -436,3 +436,24 @@ h1 {
   line-height:1.5;
   overflow-wrap:anywhere;
 }
+
+/* V011a: point symbols only; existing drawing geometry is untouched. */
+.preview-zoom-controls { flex-wrap: wrap; }
+.point-size-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #303846;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.point-size-control select {
+  min-height: 38px;
+  padding: 0 7px;
+  border: 1px solid #aeb7c5;
+  border-radius: 8px;
+  background: #fff;
+  color: #1f2937;
+  font: inherit;
+  touch-action: manipulation;
+}
