@@ -76,6 +76,26 @@ const textRedoStack: TextChange[] = [];
 type OriginalText = { before: string; layer: string; x: number; y: number; rotation: number };
 const originalText = new Map<number, OriginalText>();
 
+// V020: original JWW text records are observational only. Never mutate them.
+interface NativeJwwText {
+  content: string;
+  fontName: string;
+  textType: number;
+  sizeX: number;
+  sizeY: number;
+  spacing: number;
+  angle: number;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  layerGroup: number;
+  layer: number;
+}
+const nativeTextByDxfIndex = new Map<number, NativeJwwText>();
+let nativeTextMatched = 0;
+let nativeTextTotal = 0;
+
 app.innerHTML = `
   <header class="topbar">
     <div>
@@ -143,8 +163,12 @@ app.innerHTML = `
         <div id="text-edit-panel" class="text-edit-panel" hidden>
           <div class="editor-heading"><label for="text-edit-input">文字編集</label><button id="text-edit-close" type="button" aria-label="編集を閉じる">×</button></div>
           <div id="text-selection-status" class="text-selection-status" role="status" aria-live="polite">
-            V014：文字をタップすると文字を選択できます。
+            V020：文字をタップすると原図の文字属性を照合できます。
           </div>
+          <details id="native-text-attrs" class="native-text-attrs">
+            <summary>元JWWの文字属性を表示</summary>
+            <div id="native-text-attr-body" class="native-text-attr-body"></div>
+          </details>
           <label for="text-edit-input">選択文字を変更</label>
           <input id="text-edit-input" type="text" placeholder="図面の文字を選択してください" autocomplete="off" autocapitalize="off" spellcheck="false" disabled />
           <div class="text-edit-actions">
@@ -162,6 +186,10 @@ app.innerHTML = `
         <div id="line-style-status" class="line-style-status" role="status">
           V013：補助線色・補助線種は常時非表示。ほかの線種を再現します。
         </div>
+      </details>
+      <details id="font-audit-panel" class="font-audit-panel">
+        <summary>元図のフォント一覧・文字属性の照合結果</summary>
+        <div id="font-audit-body" class="font-audit-body"></div>
       </details>
       <details class="developer-details">
         <summary>開発用の詳細情報</summary>
@@ -190,6 +218,9 @@ const textEditUndo = document.querySelector<HTMLButtonElement>("#text-edit-undo"
 const textEditRedo = document.querySelector<HTMLButtonElement>("#text-edit-redo")!;
 const textEditClear = document.querySelector<HTMLButtonElement>("#text-edit-clear")!;
 const textEditNote = document.querySelector<HTMLDivElement>("#text-edit-note")!;
+const nativeTextAttrs = document.querySelector<HTMLDetailsElement>("#native-text-attrs")!;
+const nativeTextAttrBody = document.querySelector<HTMLDivElement>("#native-text-attr-body")!;
+const fontAuditBody = document.querySelector<HTMLDivElement>("#font-audit-body")!;
 const textEditClose = document.querySelector<HTMLButtonElement>("#text-edit-close")!;
 const floatingFitButton = document.querySelector<HTMLButtonElement>("#floating-fit-button")!;
 
@@ -529,6 +560,11 @@ async function parseBytes(input: CurrentInput): Promise<void> {
   textUndoStack.length = 0;
   textRedoStack.length = 0;
   originalText.clear();
+  nativeTextByDxfIndex.clear();
+  nativeTextMatched = 0;
+  nativeTextTotal = 0;
+  nativeTextAttrs.open = false;
+  fontAuditBody.textContent = "";
   statusLine.textContent = "読込中";
   try {
     await ensureWasm();
@@ -542,6 +578,8 @@ async function parseBytes(input: CurrentInput): Promise<void> {
     // The original DXF save continues through readDxfString with no filtering.
     const dxf = readPreviewDxfDocument(input.bytes, explodeInserts, 32, jwcCoordinates) as DxfDocument;
     const dxfText = readDxfString(input.bytes, explodeInserts, 32, jwcCoordinates);
+    buildNativeTextMatches(cad, dxf);
+    renderFontAudit(cad);
 
     parsedState = {
       fileName: input.name,
@@ -1100,6 +1138,171 @@ function selectTextAt(point:{x:number,y:number}):void {
   redrawZoom();
 }
 
+
+/**
+ * Use only direct JWW TEXTs whose original content, anchor and angle uniquely
+ * identify the TEXT produced by DXF conversion. Exploded block text is
+ * deliberately "not verified": its coordinates can undergo INSERT transforms.
+ */
+function nativeTextFromEntity(e: JwwEntity): NativeJwwText | null {
+  if (e.type !== "TEXT") return null;
+  const t = e.text ?? e;
+  if (typeof t.content !== "string" || typeof t.start_x !== "number" ||
+      typeof t.start_y !== "number" || typeof t.end_x !== "number" ||
+      typeof t.end_y !== "number") return null;
+  const values = [t.start_x, t.start_y, t.end_x, t.end_y,
+    t.size_x, t.size_y, t.spacing, t.angle];
+  if (!values.every(v => typeof v === "number" && Number.isFinite(v))) return null;
+  return {
+    content: t.content, fontName: t.font_name ?? "",
+    textType: t.text_type ?? 0, sizeX: t.size_x!, sizeY: t.size_y!,
+    spacing: t.spacing!, angle: t.angle!,
+    startX: t.start_x, startY: t.start_y,
+    endX: t.end_x, endY: t.end_y,
+    layerGroup: e.base.layer_group, layer: e.base.layer,
+  };
+}
+function smallAngleDiffDegrees(a: number, b: number): number {
+  const diff = ((a - b) % 360 + 540) % 360 - 180;
+  return Math.abs(diff);
+}
+function buildNativeTextMatches(cad: CadDocument, dxf: DxfDocument): void {
+  nativeTextByDxfIndex.clear();
+  nativeTextMatched = 0;
+  nativeTextTotal = 0;
+  if (cad.format !== "jww") return;
+  const native = cad.document.entities.map(nativeTextFromEntity)
+    .filter((t): t is NativeJwwText => t !== null);
+  nativeTextTotal = native.length;
+  const byContent = new Map<string, NativeJwwText[]>();
+  for (const t of native) {
+    const group = byContent.get(t.content) ?? [];
+    group.push(t);
+    byContent.set(t.content, group);
+  }
+  const tentative = new Map<number, NativeJwwText>();
+  const nativeUsages = new Map<NativeJwwText, number>();
+  for (const [index, dxfText] of dxf.entities.entries()) {
+    if (dxfText.type !== "TEXT" || !dxfText.content ||
+        !Number.isFinite(dxfText.x) || !Number.isFinite(dxfText.y)) continue;
+    const candidates = (byContent.get(dxfText.content) ?? []).filter(t =>
+      Math.abs(t.startX - dxfText.x!) <= 0.001 &&
+      Math.abs(t.startY - dxfText.y!) <= 0.001 &&
+      smallAngleDiffDegrees(t.angle, dxfText.rotation ?? 0) <= 0.001);
+    if (candidates.length !== 1) continue;
+    const source = candidates[0];
+    tentative.set(index, source);
+    nativeUsages.set(source, (nativeUsages.get(source) ?? 0) + 1);
+  }
+  for (const [index, source] of tentative) {
+    // Do not make a positive assertion if two DXF entities share one source.
+    if (nativeUsages.get(source) !== 1) continue;
+    nativeTextByDxfIndex.set(index, source);
+  }
+  nativeTextMatched = nativeTextByDxfIndex.size;
+}
+function charIsHalfCell(c: string): boolean {
+  const cp = c.codePointAt(0) ?? 0;
+  return (cp >= 0x20 && cp <= 0x80) || cp === 0xA5 ||
+    cp === 0x203E || (cp >= 0xF8F0 && cp <= 0xF8F3) ||
+    (cp >= 0xFF61 && cp <= 0xFF9F);
+}
+function textCellInfo(raw: string): string {
+  let half = 0, full = 0;
+  for (const c of Array.from(raw)) {
+    if (charIsHalfCell(c)) half++;
+    else full++;
+  }
+  return "全角相当 " + full + "字 / 半角相当 " + half +
+    "字 / 合計 " + (full + half * 0.5) + "文字幅相当";
+}
+function formatSourceValue(value: number): string {
+  return Number.isFinite(value) ? Number(value.toFixed(5)).toLocaleString("ja-JP") : "不明";
+}
+function addNativeAttr(label: string, value: string): void {
+  const row = document.createElement("div");
+  row.className = "native-text-attr-row";
+  const name = document.createElement("span");
+  name.textContent = label;
+  const data = document.createElement("strong");
+  data.textContent = value;
+  row.append(name, data);
+  nativeTextAttrBody.appendChild(row);
+}
+function renderNativeTextAttributes(dxfText: DxfEntity | null): void {
+  nativeTextAttrBody.replaceChildren();
+  if (!dxfText || selectedTextIndex === null) {
+    nativeTextAttrs.open = false;
+    return;
+  }
+  const native = nativeTextByDxfIndex.get(selectedTextIndex);
+  if (!native) {
+    addNativeAttr("元JWW", "未照合（ブロック内の文字、同位置の重複等の可能性）");
+    addNativeAttr("画面表示の文字高さ", formatSourceValue(dxfText.height ?? 0));
+    addNativeAttr("画面表示のフォント", "Safari標準の sans-serif（元フォントではありません）");
+    return;
+  }
+  addNativeAttr("照合", "元JWWの直接文字と一意に一致");
+  addNativeAttr("元文字列", native.content);
+  addNativeAttr("フォント名", native.fontName || "未指定（JWW記録値が空欄）");
+  addNativeAttr("文字種番号", String(native.textType));
+  addNativeAttr("文字幅 size_x", formatSourceValue(native.sizeX) + "（元データ値）");
+  addNativeAttr("文字高さ size_y", formatSourceValue(native.sizeY) + "（元データ値）");
+  addNativeAttr("文字間隔 spacing", formatSourceValue(native.spacing) + "（元データ値）");
+  addNativeAttr("角度", formatSourceValue(native.angle) + "°");
+  addNativeAttr("始点と終点の距離", formatSourceValue(
+    Math.hypot(native.endX-native.startX, native.endY-native.startY)) + "（元データ値）");
+  addNativeAttr("全角・半角", textCellInfo(native.content));
+  addNativeAttr("レイヤ", native.layerGroup.toString(16).toUpperCase() +
+    "-" + native.layer.toString(16).toUpperCase());
+  addNativeAttr("iPhoneの描画フォント", "sans-serif（代替フォント）");
+  addNativeAttr("DXF表示用の文字高さ", formatSourceValue(dxfText.height ?? 0));
+  addNativeAttr("DXF表示用の幅係数", formatSourceValue(dxfText.width_factor ?? 1));
+}
+function renderFontAudit(cad: CadDocument): void {
+  fontAuditBody.replaceChildren();
+  if (cad.format !== "jww") {
+    fontAuditBody.textContent = "元JWWのフォント一覧はJWW形式で読み込んだときに表示します。";
+    return;
+  }
+  const direct = cad.document.entities.map(nativeTextFromEntity)
+    .filter((x): x is NativeJwwText => x !== null);
+  const blocks = cad.document.block_defs.flatMap(block =>
+    block.entities.map(nativeTextFromEntity)
+      .filter((x): x is NativeJwwText => x !== null));
+  const tally = (source: NativeJwwText[]) => {
+    const map = new Map<string, number>();
+    for (const t of source) {
+      const font = t.fontName || "未指定（空欄）";
+      map.set(font, (map.get(font) ?? 0) + 1);
+    }
+    return [...map].sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0], "ja"));
+  };
+  const title = document.createElement("p");
+  title.textContent = "元JWW：直接文字 " + direct.length +
+    "件／ブロック定義内 " + blocks.length +
+    "件（未使用定義を含む）／画面の文字との一意照合 " + nativeTextMatched +
+    "件。元図のフォント名であり、iPhoneの表示フォントとは異なります。";
+  fontAuditBody.appendChild(title);
+  for (const [label, source] of [
+    ["直接文字", direct], ["ブロック定義内の文字", blocks],
+  ] as const) {
+    const heading = document.createElement("strong");
+    heading.textContent = label;
+    fontAuditBody.appendChild(heading);
+    const rows = document.createElement("div");
+    rows.className = "font-audit-rows";
+    const counts = tally(source);
+    if (!counts.length) rows.textContent = "該当なし";
+    for (const [font, count] of counts) {
+      const row = document.createElement("div");
+      row.textContent = font + "：" + count.toLocaleString("ja-JP") + "件";
+      rows.appendChild(row);
+    }
+    fontAuditBody.appendChild(rows);
+  }
+}
+
 /** V014: preview edit state is intentionally independent from source bytes. */
 function selectedTextEntity(): DxfEntity | null {
   if (!parsedState || selectedTextIndex === null) return null;
@@ -1119,6 +1322,7 @@ function syncTextEditPanel(): void {
   const entity = selectedTextEntity();
   textEditPanel.hidden = !entity;
   textEditInput.disabled = !entity;
+  renderNativeTextAttributes(entity);
   textEditInput.value = entity?.content ?? "";
   textEditNote.textContent = "変更履歴：" + textUndoStack.length +
     "件／現在の変更文字：" + effectiveTextChanges().length +

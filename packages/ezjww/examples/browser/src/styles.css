@@ -695,3 +695,49 @@ h1 {
 @media (max-width: 520px) {
   .right-pane { grid-template-rows: auto 54dvh auto auto; }
 }
+
+
+/* V020: original JWW text records are read-only and stay compact until opened. */
+.native-text-attrs {
+  min-width: 0;
+  border: 1px solid #b7c9da;
+  border-radius: 7px;
+  padding: 6px 9px;
+  background: #ffffff;
+}
+.native-text-attrs > summary {
+  color: #204e77;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.native-text-attr-body { margin-top: 7px; display: grid; gap: 3px; }
+.native-text-attr-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: start;
+  column-gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid #e4eaf1;
+  font-size: 12px;
+}
+.native-text-attr-row > span { color: #526477; }
+.native-text-attr-row > strong {
+  font-weight: 600;
+  max-width: 100%;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.font-audit-panel {
+  width: 100%;
+  border: 1px solid #c9ced8;
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 9px 11px;
+  font-size: 13px;
+}
+.font-audit-panel > summary { cursor: pointer; color: #334a60; }
+.font-audit-body { margin-top: 9px; display: grid; gap: 8px; }
+.font-audit-body p { margin: 0; line-height: 1.5; }
+.font-audit-rows { padding-left: 9px; overflow-wrap: anywhere; }
