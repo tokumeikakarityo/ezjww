@@ -136,6 +136,8 @@ app.innerHTML = `
       <button id="share-edited-zip" type="button" disabled>編集DXFをZIPで共有</button>
       <button id="share-whole-image" type="button">図面全体（高画質PNG）</button>
       <button id="share-preview-image" type="button">表示中の範囲（高画質PNG）</button>
+      <button id="save-whole-image" type="button">全体PNGを保存</button>
+      <button id="save-preview-image" type="button">範囲PNGを保存</button>
     </div>
     <p class="cad-share-note">LINEでJWW・DXFの直接共有が拒否される場合は「ZIPで共有」をお試しください。うまくいかなければ「CADのZIPを保存」→LINEのトーク内「＋」→「ファイル」で送信できます。高画質PNGはCADデータから新しく描画し、画面の画像を拡大コピーしません。元のCADデータは変更しません。</p>
     <p id="share-result" class="cad-share-result" role="status" aria-live="polite"></p>
@@ -237,6 +239,8 @@ const shareOriginalFileButton = document.querySelector<HTMLButtonElement>("#shar
 const shareEditedDxfButton = document.querySelector<HTMLButtonElement>("#share-edited-dxf")!;
 const sharePreviewImageButton = document.querySelector<HTMLButtonElement>("#share-preview-image")!;
 const shareWholeImageButton = document.querySelector<HTMLButtonElement>("#share-whole-image")!;
+const saveWholeImageButton = document.querySelector<HTMLButtonElement>("#save-whole-image")!;
+const savePreviewImageButton = document.querySelector<HTMLButtonElement>("#save-preview-image")!;
 const shareOriginalZipButton = document.querySelector<HTMLButtonElement>("#share-original-zip")!;
 const saveOriginalZipButton = document.querySelector<HTMLButtonElement>("#save-original-zip")!;
 const shareEditedZipButton = document.querySelector<HTMLButtonElement>("#share-edited-zip")!;
@@ -616,6 +620,8 @@ function updateShareControls(): void {
   shareOriginalFileButton.disabled = !loaded;
   sharePreviewImageButton.disabled = !loaded;
   shareWholeImageButton.disabled = !loaded;
+  saveWholeImageButton.disabled = !loaded;
+  savePreviewImageButton.disabled = !loaded;
   shareOriginalZipButton.disabled = !loaded;
   saveOriginalZipButton.disabled = !loaded;
   shareEditedDxfButton.disabled = !loaded ||
@@ -653,6 +659,18 @@ sharePreviewImageButton.addEventListener("click", () => {
 shareWholeImageButton.addEventListener("click", () => {
   try { void shareOrDownload(highResolutionPngFile("whole")); }
   catch (error) { shareStatus("全体画像の作成に失敗：" + String(error)); }
+});
+saveWholeImageButton.addEventListener("click", () => {
+  try {
+    saveFileLocally(highResolutionPngFile("whole"));
+    shareStatus("全体PNGを保存しました。LINEで画質を維持したい場合はトークの「＋」→「ファイル」から選んでください。");
+  } catch (error) { shareStatus("全体画像保存に失敗：" + String(error)); }
+});
+savePreviewImageButton.addEventListener("click", () => {
+  try {
+    saveFileLocally(highResolutionPngFile("viewport"));
+    shareStatus("表示範囲PNGを保存しました。LINEの「＋」→「ファイル」で送れます。");
+  } catch (error) { shareStatus("範囲画像保存に失敗：" + String(error)); }
 });
 shareOriginalZipButton.addEventListener("click", () => {
   try { const file = originalCadZip(); if (file) void shareOrDownload(file); }
