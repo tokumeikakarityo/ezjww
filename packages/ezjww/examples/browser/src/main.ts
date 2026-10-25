@@ -1,7 +1,7 @@
 import initWasm, {
   detectFileFormat,
   readCadDocument,
-  readDxfDocument,
+  readPreviewDxfDocument,
   readDxfString,
   newJwwDocument,
   toJwwBytes,
@@ -134,7 +134,7 @@ app.innerHTML = `
           </label>
         </div>
         <div id="line-style-status" class="line-style-status" role="status">
-          V012：JWW線種を原図の設定に沿って表示します。
+          V013：補助線色・補助線種は常時非表示。ほかの線種を再現します。
         </div>
         <div id="text-selection-status" class="text-selection-status" role="status" aria-live="polite">
           V011：図面を拡大し、文字をタップすると内容とレイヤを表示します（選択のみ）。
@@ -438,7 +438,9 @@ async function parseBytes(input: CurrentInput): Promise<void> {
     }
 
     const cad = readCadDocument(input.bytes) as CadDocument;
-    const dxf = readDxfDocument(input.bytes, explodeInserts, 32, jwcCoordinates) as DxfDocument;
+    // The preview-only converter omits JWW pen_color=9 OR pen_style=9.
+    // The original DXF save continues through readDxfString with no filtering.
+    const dxf = readPreviewDxfDocument(input.bytes, explodeInserts, 32, jwcCoordinates) as DxfDocument;
     const dxfText = readDxfString(input.bytes, explodeInserts, 32, jwcCoordinates);
 
     parsedState = {
@@ -736,7 +738,7 @@ function drawDxf(
   }
   context.restore();
   document.querySelector<HTMLDivElement>("#line-style-status")!.textContent =
-    "V012 線種：" + (showJwwLineTypes ? "原図表示" : "すべて実線") +
+    "V013：補助線色・補助線種を除外 / 線種：" + (showJwwLineTypes ? "原図表示" : "すべて実線") +
     " / 破線・鎖線等 " + patternedCount.toLocaleString("ja-JP") + "要素" +
     " / 線種定義 " + dxf.line_types.length + "種類" +
     (unknownCount ? " / 未解決 " + unknownCount + "要素" : "");

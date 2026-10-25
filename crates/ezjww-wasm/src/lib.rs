@@ -129,6 +129,41 @@ pub fn read_dxf_document(
     to_js_value(&dxf_document)
 }
 
+/// iPhone preview only: omit the Jw_cad non-printing auxiliary attributes.
+/// Both the original input bytes and DXF export path stay unchanged.
+/// pen_color=9: auxiliary color, pen_style=9: auxiliary linetype.
+#[wasm_bindgen(js_name = readPreviewDxfDocument)]
+pub fn read_preview_dxf_document(
+    data: &[u8],
+    explode_inserts: bool,
+    max_block_nesting: usize,
+    jwc_coordinates: Option<String>,
+    text_em_scale: Option<f64>,
+) -> Result<JsValue, JsValue> {
+    // Do not change the established JWC/JWS display behavior.
+    if is_jwc_file(data) || is_jws_file(data) {
+        return read_dxf_document(
+            data, explode_inserts, max_block_nesting, jwc_coordinates, text_em_scale
+        );
+    }
+    let options = convert_options(
+        explode_inserts,
+        max_block_nesting,
+        text_em_scale.unwrap_or(1.0),
+    )?;
+    let mut document = parse_document(data).map_err(to_js_error)?;
+    let is_printable = |entity: &ezjww_core::Entity| {
+        let base = entity.base();
+        base.pen_color != 9 && base.pen_style != 9
+    };
+    document.entities.retain(is_printable);
+    for block in &mut document.block_defs {
+        block.entities.retain(is_printable);
+    }
+    let dxf_document = convert_document_with_options(&document, options);
+    to_js_value(&dxf_document)
+}
+
 #[wasm_bindgen(js_name = readDxfString)]
 pub fn read_dxf_string(
     data: &[u8],

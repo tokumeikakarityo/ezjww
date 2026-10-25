@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/iphone-jww.yml'
       - 'packages/ezjww/examples/browser/src/main.ts'
+      - 'crates/ezjww-wasm/src/lib.rs'
       - 'packages/ezjww/examples/browser/src/styles.css'
 
 permissions:
