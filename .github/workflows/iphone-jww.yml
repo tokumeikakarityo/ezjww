@@ -52,6 +52,7 @@ jobs:
         run: |
           pnpm run example:browser:sample
           pnpm run example:browser:wasm
+          pnpm run build:wasm
           pnpm exec tsc -p examples/browser/tsconfig.json
           pnpm exec vite build examples/browser --base "/${GITHUB_REPOSITORY#*/}/"
       - name: Validate WASM file nonempty and magic header
