@@ -112,7 +112,7 @@ app.innerHTML = `
       </label>
       <button id="download-button" class="tool-button" type="button" disabled>DXF保存（原図）</button>
       <button id="download-edited-dxf" class="tool-button" type="button" disabled>編集DXF保存</button>
-      <button id="open-share-panel" class="tool-button" type="button" disabled>共有</button>
+      <button id="open-share-panel" class="tool-button" type="button" disabled>共有・PDF</button>
       <button id="sample-button" class="tool-button" type="button" hidden>サンプル読込</button>
       <button id="create-button" class="tool-button" type="button" hidden>JWW作成例</button>
       <button id="download-jww-button" class="tool-button" type="button" disabled hidden>生成JWW保存</button>
@@ -138,8 +138,24 @@ app.innerHTML = `
       <button id="share-preview-image" type="button">表示中の範囲（高画質PNG）</button>
       <button id="save-whole-image" type="button">全体PNGを保存</button>
       <button id="save-preview-image" type="button">範囲PNGを保存</button>
+      <button id="share-whole-image-2x" type="button">全体PNG・2倍を共有</button>
+      <button id="save-whole-image-2x" type="button">全体PNG・2倍を保存</button>
     </div>
-    <p class="cad-share-note">LINEでJWW・DXFの直接共有が拒否される場合は「ZIPで共有」をお試しください。うまくいかなければ「CADのZIPを保存」→LINEのトーク内「＋」→「ファイル」で送信できます。高画質PNGはCADデータから新しく描画し、画面の画像を拡大コピーしません。元のCADデータは変更しません。</p>
+    <div class="cad-pdf-settings">
+      <strong>PDF（用紙に合わせて出力）</strong>
+      <label for="pdf-paper-select">用紙
+        <select id="pdf-paper-select">
+          <option value="A4" selected>A4</option>
+          <option value="A3">A3</option>
+        </select>
+      </label>
+      <span class="cad-pdf-hint">縦横自動／白背景／図面全体／縮尺指定なし</span>
+      <div class="cad-share-actions">
+        <button id="share-pdf" type="button">PDFを共有</button>
+        <button id="save-pdf" type="button">PDFを保存</button>
+      </div>
+    </div>
+    <p class="cad-share-note">LINEでCAD形式が拒否される場合はZIPを保存して「＋」→「ファイル」から送れます。2倍PNGは最大辺約6,600px・最大約4,000万画素の試験機能で、大きなメモリを使用します。PDFは印刷用の高画質画像を埋め込む形式で、図面の実寸縮尺は保証しません。元のCADデータは変更しません。</p>
     <p id="share-result" class="cad-share-result" role="status" aria-live="polite"></p>
   </section>
 
@@ -244,6 +260,11 @@ const savePreviewImageButton = document.querySelector<HTMLButtonElement>("#save-
 const shareOriginalZipButton = document.querySelector<HTMLButtonElement>("#share-original-zip")!;
 const saveOriginalZipButton = document.querySelector<HTMLButtonElement>("#save-original-zip")!;
 const shareEditedZipButton = document.querySelector<HTMLButtonElement>("#share-edited-zip")!;
+const shareWhole2xButton = document.querySelector<HTMLButtonElement>("#share-whole-image-2x")!;
+const saveWhole2xButton = document.querySelector<HTMLButtonElement>("#save-whole-image-2x")!;
+const pdfPaperSelect = document.querySelector<HTMLSelectElement>("#pdf-paper-select")!;
+const sharePdfButton = document.querySelector<HTMLButtonElement>("#share-pdf")!;
+const savePdfButton = document.querySelector<HTMLButtonElement>("#save-pdf")!;
 const shareResult = document.querySelector<HTMLParagraphElement>("#share-result")!;
 const textEditPanel = document.querySelector<HTMLDivElement>("#text-edit-panel")!;
 const textEditInput = document.querySelector<HTMLInputElement>("#text-edit-input")!;
@@ -563,7 +584,7 @@ function imageCanvasFile(output: HTMLCanvasElement, filename: string): File {
  * "whole" fits geometry tightly; "viewport" preserves the visible pan/zoom.
  * Separate canvas prevents changes to the live screen and selection hits.
  */
-function highResolutionPngFile(mode: "whole" | "viewport"): File {
+function highResolutionPngFile(mode: "whole" | "viewport", density: 1 | 2 = 1): File {
   if (!parsedState) throw new Error("図面が読み込まれていません");
   const liveW = Math.max(1, canvas.getBoundingClientRect().width);
   const liveH = Math.max(1, canvas.getBoundingClientRect().height);
@@ -582,14 +603,15 @@ function highResolutionPngFile(mode: "whole" | "viewport"): File {
     const bounds = dxfBounds(dxf.entities.filter(e => !hidden.has(e.layer)), temp, widths);
     if (bounds) aspect = Math.max(0.01,(bounds.maxX-bounds.minX)/Math.max(0.01,bounds.maxY-bounds.minY));
   }
-  const maxEdge = 3300;
+  const maxEdge = 3300 * (mode === "whole" ? density : 1);
   let width = aspect >= 1 ? maxEdge : Math.round(maxEdge * aspect);
   let height = aspect >= 1 ? Math.round(maxEdge / aspect) : maxEdge;
   width = Math.max(1, width);
   height = Math.max(1, height);
   const px = width * height;
-  if (px > 10000000) {
-    const limit = Math.sqrt(10000000/px);
+  const pixelLimit = mode === "whole" && density === 2 ? 40000000 : 10000000;
+  if (px > pixelLimit) {
+    const limit = Math.sqrt(pixelLimit/px);
     width = Math.max(1,Math.round(width*limit));
     height = Math.max(1,Math.round(height*limit));
   }
@@ -611,7 +633,129 @@ function highResolutionPngFile(mode: "whole" | "viewport"): File {
     strokePx:mode==="whole"?1.7:Math.max(2,Math.min(7,1.2*factor)),
   });
   return imageCanvasFile(output, filenameStem() +
-    (mode === "whole" ? "_全体高画質.png" : "_表示範囲高画質.png"));
+    (mode === "whole"
+      ? (density === 2 ? "_全体2倍.png" : "_全体高画質.png")
+      : "_表示範囲高画質.png"));
+}
+
+
+
+/**
+ * V024: portable single-page image PDF. This is intentionally a FIT-TO-PAGE
+ * raster PDF, not a 1:50 etc. CAD-scale or vector PDF. No network resources.
+ * JPEG is embedded directly into PDF using /DCTDecode.
+ */
+function pdfFromJpeg(jpeg: Uint8Array, imgWidth: number, imgHeight: number,
+    pageWidth: number, pageHeight: number): Uint8Array {
+  if (!jpeg.length || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) {
+    throw new Error("JPEG画像が正しく生成されませんでした");
+  }
+  const encoder = new TextEncoder();
+  const fragments: Uint8Array[] = [];
+  let length = 0;
+  const append = (bytes: Uint8Array): void => {
+    fragments.push(bytes);
+    length += bytes.byteLength;
+  };
+  const write = (value: string): void => { append(encoder.encode(value)); };
+  const offsets: number[] = [0];
+  const object = (id: number, body: string): void => {
+    offsets[id] = length;
+    write(id + " 0 obj\n" + body + "\nendobj\n");
+  };
+  write("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+  object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  object(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " +
+    pageWidth.toFixed(3) + " " + pageHeight.toFixed(3) +
+    "] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>");
+  offsets[4] = length;
+  write("4 0 obj\n<< /Type /XObject /Subtype /Image /Width " + imgWidth +
+    " /Height " + imgHeight +
+    " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " +
+    jpeg.length + " >>\nstream\n");
+  append(jpeg);
+  write("\nendstream\nendobj\n");
+  const instructions = "q\n" + pageWidth.toFixed(3) + " 0 0 " +
+    pageHeight.toFixed(3) + " 0 0 cm\n/Im0 Do\nQ\n";
+  const stream = encoder.encode(instructions);
+  offsets[5] = length;
+  write("5 0 obj\n<< /Length " + stream.length + " >>\nstream\n");
+  append(stream);
+  write("endstream\nendobj\n");
+  const xrefStart = length;
+  write("xref\n0 6\n0000000000 65535 f \n");
+  for (let i = 1; i <= 5; i++) {
+    write(String(offsets[i]).padStart(10, "0") + " 00000 n \n");
+  }
+  write("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" +
+    xrefStart + "\n%%EOF\n");
+  const output = new Uint8Array(length);
+  let pos = 0;
+  for (const part of fragments) {
+    output.set(part, pos);
+    pos += part.byteLength;
+  }
+  return output;
+}
+
+function cadPdfFile(paper: "A4" | "A3"): File {
+  if (!parsedState) throw new Error("図面を読み込んでください");
+  const dxf = parsedState.dxf;
+  const isJwc = !!dxf.jwc_conversion_report;
+  const hidden = new Set(isJwc ? dxf.layers.filter(l => l.frozen).map(l => l.name) : []);
+  const preview = document.createElement("canvas").getContext("2d");
+  if (!preview) throw new Error("PDF用描画を準備できません");
+  const widths = new Map<DxfEntity, number>();
+  let index = 0;
+  for (const entity of dxf.entities) {
+    if (entity.type === "TEXT" && isJwc) {
+      widths.set(entity, dxf.text_width_factors?.[index++] ?? 1);
+    }
+  }
+  const bounds = dxfBounds(dxf.entities.filter(e => !hidden.has(e.layer)), preview, widths);
+  if (!bounds) throw new Error("出力できる図形がありません");
+  const isLandscape = (bounds.maxX - bounds.minX) > (bounds.maxY - bounds.minY);
+  const dimensions = paper === "A3" ? [841.89, 1190.55] : [595.28, 841.89];
+  const pageW = isLandscape ? dimensions[1] : dimensions[0];
+  const pageH = isLandscape ? dimensions[0] : dimensions[1];
+  // A4 ~3500px, A3 ~4700px on long side, with an iPhone memory cap.
+  let width = Math.round(pageW / Math.max(pageW, pageH) * (paper === "A3" ? 4700 : 3500));
+  let height = Math.round(pageH / Math.max(pageW, pageH) * (paper === "A3" ? 4700 : 3500));
+  const pixelCount = width * height;
+  if (pixelCount > 16000000) {
+    const factor = Math.sqrt(16000000 / pixelCount);
+    width = Math.max(1, Math.floor(width * factor));
+    height = Math.max(1, Math.floor(height * factor));
+  }
+  const image = document.createElement("canvas");
+  image.width = width;
+  image.height = height;
+  const ctx = image.getContext("2d");
+  if (!ctx) throw new Error("PDFの高解像度画像を生成できません");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+  // Drawing is always printed on white; do not change the live black/white UI.
+  drawDxf(ctx, width, height, dxf, {
+    exportMode: true,
+    exportWhole: true,
+    backgroundOverride: "white",
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    padding: Math.min(width, height) * 0.045,
+    strokePx: Math.max(1.45, paper === "A3" ? 2 : 1.7),
+  });
+  const dataUrl = image.toDataURL("image/jpeg", 0.96);
+  if (!dataUrl.startsWith("data:image/jpeg;base64,")) {
+    throw new Error("JPEG画像の生成に失敗しました");
+  }
+  const binary = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
+  const jpeg = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) jpeg[i] = binary.charCodeAt(i);
+  const pdf = pdfFromJpeg(jpeg, width, height, pageW, pageH);
+  return new File([pdf], filenameStem() + "_" + paper +
+    (isLandscape ? "横" : "縦") + "_図面.pdf", { type: "application/pdf" });
 }
 
 function updateShareControls(): void {
@@ -619,6 +763,11 @@ function updateShareControls(): void {
   openSharePanelButton.disabled = !loaded;
   shareOriginalFileButton.disabled = !loaded;
   sharePreviewImageButton.disabled = !loaded;
+  shareWhole2xButton.disabled = !loaded;
+  saveWhole2xButton.disabled = !loaded;
+  sharePdfButton.disabled = !loaded;
+  savePdfButton.disabled = !loaded;
+  pdfPaperSelect.disabled = !loaded;
   shareWholeImageButton.disabled = !loaded;
   saveWholeImageButton.disabled = !loaded;
   savePreviewImageButton.disabled = !loaded;
@@ -671,6 +820,39 @@ savePreviewImageButton.addEventListener("click", () => {
     saveFileLocally(highResolutionPngFile("viewport"));
     shareStatus("表示範囲PNGを保存しました。LINEの「＋」→「ファイル」で送れます。");
   } catch (error) { shareStatus("範囲画像保存に失敗：" + String(error)); }
+});
+shareWhole2xButton.addEventListener("click", () => {
+  try { void shareOrDownload(highResolutionPngFile("whole", 2)); }
+  catch (error) { shareStatus("2倍PNGの生成に失敗しました。標準PNGをお試しください：" + String(error)); }
+});
+saveWhole2xButton.addEventListener("click", () => {
+  try {
+    const file = highResolutionPngFile("whole", 2);
+    saveFileLocally(file);
+    shareStatus("2倍PNG（" + (file.size / 1048576).toFixed(2) +
+      " MB）を保存しました。失敗する機種では標準PNGをお使いください。");
+  } catch (error) { shareStatus("2倍PNGの保存に失敗しました。標準PNGをお試しください：" + String(error)); }
+});
+function selectedPdfPaper(): "A4" | "A3" {
+  return pdfPaperSelect.value === "A3" ? "A3" : "A4";
+}
+sharePdfButton.addEventListener("click", () => {
+  try {
+    const file = cadPdfFile(selectedPdfPaper());
+    void shareOrDownload(file);
+  } catch (error) {
+    shareStatus("PDF作成に失敗しました：" + String(error));
+  }
+});
+savePdfButton.addEventListener("click", () => {
+  try {
+    const file = cadPdfFile(selectedPdfPaper());
+    saveFileLocally(file);
+    shareStatus("PDF（" + selectedPdfPaper() + "、" + (file.size / 1048576).toFixed(2) +
+      " MB）を保存しました。iPhoneのファイルアプリで確認できます。");
+  } catch (error) {
+    shareStatus("PDF保存に失敗しました：" + String(error));
+  }
 });
 shareOriginalZipButton.addEventListener("click", () => {
   try { const file = originalCadZip(); if (file) void shareOrDownload(file); }
@@ -1109,9 +1291,11 @@ function drawDxf(
   options: {
     exportMode?: boolean; exportWhole?: boolean; zoom?: number;
     panX?: number; panY?: number; padding?: number; strokePx?: number;
+    backgroundOverride?: "white" | "black";
   } = {},
 ): void {
   const exportMode = options.exportMode === true;
+  const drawingBackground = options.backgroundOverride ?? canvasBackground;
   const renderZoom = options.zoom ?? viewZoom;
   const renderPanX = options.panX ?? viewPanX;
   const renderPanY = options.panY ?? viewPanY;
@@ -1147,8 +1331,8 @@ function drawDxf(
     (height - padding * 2) / modelHeight,
   );
 
-  const offsetX = isJwc ? (width - modelWidth * scale) / 2 : padding;
-  const offsetY = isJwc ? (height - modelHeight * scale) / 2 : padding;
+  const offsetX = (exportMode || isJwc) ? (width - modelWidth * scale) / 2 : padding;
+  const offsetY = (exportMode || isJwc) ? (height - modelHeight * scale) / 2 : padding;
   const toScreen = (x: number, y: number): [number, number] => [
     offsetX + (x - bounds.minX) * scale,
     height - offsetY - (y - bounds.minY) * scale,
@@ -1184,7 +1368,7 @@ function drawDxf(
     const originalWhiteColor = isJwc
       ? (({132: "#00a5a5", 18: "#260000", 92: "#00a500", 52: "#a5a500", 212: "#a500a5"} as Record<number, string>)[entity.color] ?? colorFor(entity.color))
       : colorFor(entity.color);
-    context.strokeStyle = canvasBackground === "black" ? dxfAciColor(entity.color) : originalWhiteColor;
+    context.strokeStyle = drawingBackground === "black" ? dxfAciColor(entity.color) : originalWhiteColor;
     context.fillStyle = context.strokeStyle;
     context.lineWidth = (options.strokePx ?? 1.2) / renderZoom;
     if (entity.type === "LINE" || entity.type === "ARC" ||
@@ -1198,7 +1382,7 @@ function drawDxf(
       // Solids, points and labels must not inherit the previous line's dash.
       context.setLineDash([]);
     }
-    drawEntity(context, entity, toScreen, scale, widths.get(entity), renderZoom);
+    drawEntity(context, entity, toScreen, scale, widths.get(entity), renderZoom, drawingBackground);
     // Text glyphs now render after all lines/circles/points, so they appear
     // in front. Preserve the original array index for text selection.
     if (!exportMode && entity.type === "TEXT" && hasNumbers(entity, "x", "y") && entity.content) {
@@ -1292,6 +1476,7 @@ function drawEntity(
   scale: number,
   textWidthFactor?: number,
   renderZoom = viewZoom,
+  drawingBackground: "white" | "black" = canvasBackground,
 ): void {
   if (entity.type === "LINE" && hasNumbers(entity, "x1", "y1", "x2", "y2")) {
     const [x1, y1] = toScreen(entity.x1, entity.y1);
@@ -1340,7 +1525,7 @@ function drawEntity(
     // Match the former light-mode tone, but make the fill opaque.
     // Transparent fills produce dark overlap seams across adjoining SOLIDs.
     const solidColor = String(context.fillStyle);
-    context.fillStyle = canvasBackground === "white"
+    context.fillStyle = drawingBackground === "white"
       ? solidColorOnWhite(solidColor) : solidColor;
     context.beginPath();
     context.moveTo(...p1);
