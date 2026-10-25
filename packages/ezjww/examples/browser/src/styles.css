@@ -741,3 +741,55 @@ h1 {
 .font-audit-body { margin-top: 9px; display: grid; gap: 8px; }
 .font-audit-body p { margin: 0; line-height: 1.5; }
 .font-audit-rows { padding-left: 9px; overflow-wrap: anywhere; }
+
+
+/* V022 share menu is outside the CAD canvas and does not change its layout. */
+.cad-share-panel {
+  width: calc(100% - 32px);
+  max-width: 850px;
+  margin: 8px auto;
+  padding: 13px 14px;
+  border: 1px solid #b2c5d9;
+  background: #f8fbff;
+  border-radius: 12px;
+  box-sizing: border-box;
+  box-shadow: 0 3px 16px rgba(0,0,0,.11);
+  color: #213953;
+}
+.cad-share-panel[hidden] { display: none !important; }
+.cad-share-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.cad-share-head strong { font-size: 16px; }
+.cad-share-head button {
+  background: #fff;
+  border: 1px solid #b2c5d9;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 20px;
+  min-width: 37px;
+  min-height: 37px;
+}
+.cad-share-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.cad-share-actions button {
+  padding: 9px 12px;
+  min-height: 44px;
+  border: 1px solid #a9bfd3;
+  border-radius: 8px;
+  background: white;
+  color: #1b486c;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+.cad-share-actions button:disabled { opacity: .38; }
+.cad-share-note,.cad-share-result {
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 9px 0 0;
+  overflow-wrap: anywhere;
+}
+.cad-share-result { color: #8b4700; }
+@media (max-width: 520px) {
+  .cad-share-panel { width: calc(100% - 20px); padding: 10px; }
+  .cad-share-actions button { flex: 1 1 auto; }
+}

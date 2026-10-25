@@ -112,6 +112,7 @@ app.innerHTML = `
       </label>
       <button id="download-button" class="tool-button" type="button" disabled>DXF保存（原図）</button>
       <button id="download-edited-dxf" class="tool-button" type="button" disabled>編集DXF保存</button>
+      <button id="open-share-panel" class="tool-button" type="button" disabled>共有</button>
       <button id="sample-button" class="tool-button" type="button" hidden>サンプル読込</button>
       <button id="create-button" class="tool-button" type="button" hidden>JWW作成例</button>
       <button id="download-jww-button" class="tool-button" type="button" disabled hidden>生成JWW保存</button>
@@ -121,6 +122,20 @@ app.innerHTML = `
       </label>
     </div>
   </header>
+
+  <section id="share-panel" class="cad-share-panel" hidden aria-label="ファイル共有">
+    <div class="cad-share-head">
+      <strong>図面を共有</strong>
+      <button id="close-share-panel" type="button" aria-label="共有画面を閉じる">×</button>
+    </div>
+    <div class="cad-share-actions">
+      <button id="share-original-file" type="button">原JWWを共有</button>
+      <button id="share-edited-dxf" type="button" disabled>編集DXFを共有</button>
+      <button id="share-preview-image" type="button">画面画像（PNG）を共有</button>
+    </div>
+    <p class="cad-share-note">元JWWは一切変更しません。「編集DXF」は文字変更済みの別ファイルです。共有できない形式はiPhoneへの保存に切り替えます。</p>
+    <p id="share-result" class="cad-share-result" role="status" aria-live="polite"></p>
+  </section>
 
   <main class="shell">
     <section class="left-pane">
@@ -211,6 +226,13 @@ const downloadButton = document.querySelector<HTMLButtonElement>("#download-butt
 const downloadEditedDxf = document.querySelector<HTMLButtonElement>("#download-edited-dxf")!;
 const createButton = document.querySelector<HTMLButtonElement>("#create-button")!;
 const downloadJwwButton = document.querySelector<HTMLButtonElement>("#download-jww-button")!;
+const openSharePanelButton = document.querySelector<HTMLButtonElement>("#open-share-panel")!;
+const sharePanel = document.querySelector<HTMLElement>("#share-panel")!;
+const closeSharePanelButton = document.querySelector<HTMLButtonElement>("#close-share-panel")!;
+const shareOriginalFileButton = document.querySelector<HTMLButtonElement>("#share-original-file")!;
+const shareEditedDxfButton = document.querySelector<HTMLButtonElement>("#share-edited-dxf")!;
+const sharePreviewImageButton = document.querySelector<HTMLButtonElement>("#share-preview-image")!;
+const shareResult = document.querySelector<HTMLParagraphElement>("#share-result")!;
 const textEditPanel = document.querySelector<HTMLDivElement>("#text-edit-panel")!;
 const textEditInput = document.querySelector<HTMLInputElement>("#text-edit-input")!;
 const textEditApply = document.querySelector<HTMLButtonElement>("#text-edit-apply")!;
@@ -382,6 +404,128 @@ downloadButton.addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
+
+
+/**
+ * V022: native iOS share sheet integration.
+ *
+ * All three outputs are generated on the device from already loaded data.
+ * Unsupported file types fall back to download; no automatic upload or
+ * submission to a remote server is performed.
+ */
+function saveFileLocally(file: File): void {
+  const blobUrl = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = file.name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
+
+function filenameStem(): string {
+  return (parsedState?.fileName ?? "drawing").replace(/\.[^.]*$/, "");
+}
+
+function shareStatus(text: string): void {
+  shareResult.textContent = text;
+}
+
+async function shareOrDownload(file: File): Promise<void> {
+  // File sharing is optional at both browser and receiving-app levels.
+  // Never claim a recipient actually received it.
+  const fileList = [file];
+  const mayShare = typeof navigator.share === "function" &&
+    typeof navigator.canShare === "function" &&
+    navigator.canShare({ files: fileList });
+  if (!mayShare) {
+    saveFileLocally(file);
+    shareStatus("このファイル形式はSafariから直接共有できないため、ダウンロードしました。iPhoneの「ファイル」アプリからメール・LINEで送ってください。");
+    return;
+  }
+  try {
+    // Called directly from a user-pressed button (no async prep/await).
+    await navigator.share({ files: fileList, title: file.name });
+    shareStatus("iPhoneの共有操作が終了しました。送信先で送信完了をご確認ください。");
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      shareStatus("共有をキャンセルしました。");
+      return;
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    saveFileLocally(file);
+    shareStatus("直接共有できなかったためダウンロードしました。「ファイル」アプリから共有できます。（" + reason + "）");
+  }
+}
+
+function originalCadFile(): File | null {
+  if (!parsedState || !currentInput) return null;
+  return new File([Uint8Array.from(currentInput.bytes)],
+    parsedState.fileName, { type: "application/octet-stream" });
+}
+
+function changedDxfFile(): File | null {
+  if (!parsedState || !currentInput || parsedState.cad.format !== "jww") return null;
+  const changes = effectiveTextChanges();
+  if (!changes.length) return null;
+  // Uses the same previously tested exact-match exporter as the V015 button.
+  const content = readEditedDxfString(currentInput.bytes, explodeInserts, changes);
+  return new File([content], filenameStem() + "_文字変更.dxf",
+    { type: "application/dxf" });
+}
+
+function snapshotPngFile(): File {
+  // The currently shown CAD viewport, not the webpage or popup.
+  const base64 = canvas.toDataURL("image/png").split(",")[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], filenameStem() + "_画面.png",
+    { type: "image/png" });
+}
+
+function updateShareControls(): void {
+  const loaded = parsedState !== null;
+  openSharePanelButton.disabled = !loaded;
+  shareOriginalFileButton.disabled = !loaded;
+  sharePreviewImageButton.disabled = !loaded;
+  shareEditedDxfButton.disabled = !loaded ||
+    parsedState?.cad.format !== "jww" || effectiveTextChanges().length === 0;
+}
+
+openSharePanelButton.addEventListener("click", () => {
+  updateShareControls();
+  shareResult.textContent = "";
+  sharePanel.hidden = !sharePanel.hidden;
+});
+closeSharePanelButton.addEventListener("click", () => {
+  sharePanel.hidden = true;
+});
+shareOriginalFileButton.addEventListener("click", () => {
+  const file = originalCadFile();
+  if (!file) return;
+  void shareOrDownload(file);
+});
+shareEditedDxfButton.addEventListener("click", () => {
+  try {
+    const file = changedDxfFile();
+    if (!file) return;
+    void shareOrDownload(file);
+  } catch (error) {
+    shareStatus("編集DXFの作成に失敗しました。元データは変更されていません。" +
+      (error instanceof Error ? error.message : String(error)));
+  }
+});
+sharePreviewImageButton.addEventListener("click", () => {
+  try {
+    const file = snapshotPngFile();
+    void shareOrDownload(file);
+  } catch (error) {
+    shareStatus("画像の作成に失敗しました。" +
+      (error instanceof Error ? error.message : String(error)));
+  }
+});
 
 function effectiveTextChanges(): Array<OriginalText & { after: string }> {
   const state = parsedState;
@@ -559,6 +703,7 @@ async function parseBytes(input: CurrentInput): Promise<void> {
   textHits = [];
   textUndoStack.length = 0;
   textRedoStack.length = 0;
+  sharePanel.hidden = true;
   originalText.clear();
   nativeTextByDxfIndex.clear();
   nativeTextMatched = 0;
@@ -614,6 +759,7 @@ function render(): void {
   downloadButton.disabled = !parsedState;
   downloadEditedDxf.disabled = !parsedState || parsedState.cad.format !== "jww" || effectiveTextChanges().length === 0;
   downloadJwwButton.disabled = !parsedState?.generatedJww;
+  updateShareControls();
   coordinateSelect.disabled = parsedState?.cad.format !== "jwc";
   floatingFitButton.hidden = !parsedState;
   renderPreview(parsedState);
@@ -1333,6 +1479,7 @@ function updateTextEditControls(): void {
   textEditRedo.disabled = textRedoStack.length === 0;
   textEditClear.disabled = !entity;
   downloadEditedDxf.disabled = !parsedState || parsedState.cad.format !== "jww" || effectiveTextChanges().length === 0;
+  updateShareControls();
 }
 function syncTextEditPanel(): void {
   const entity = selectedTextEntity();
