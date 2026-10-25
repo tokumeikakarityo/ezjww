@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - '.github/workflows/iphone-jww.yml'
+      - 'packages/ezjww/examples/browser/src/main.ts'
+      - 'packages/ezjww/examples/browser/src/styles.css'
 
 permissions:
   contents: read

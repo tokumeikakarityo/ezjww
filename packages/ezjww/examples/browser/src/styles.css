@@ -409,3 +409,15 @@ h1 {
     flex: 1;
   }
 }
+
+/* iPhone drawing gestures; preserve normal page scrolling outside canvas. */
+.preview {touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab}
+.preview:active {cursor:grabbing}
+.preview-head {flex-wrap:wrap}
+.preview-zoom-controls {display:flex;align-items:center;gap:6px}
+.preview-zoom-controls button {
+  min-height:40px;min-width:42px;border:1px solid #aeb7c5;
+  border-radius:8px;background:#fff;color:#1f2937;font:inherit;
+  font-weight:700;touch-action:manipulation;
+}
+#zoom-level {min-width:50px;text-align:center;font-size:13px;color:#303846}

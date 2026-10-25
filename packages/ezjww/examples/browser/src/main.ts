@@ -47,6 +47,11 @@ let currentInput: CurrentInput | null = null;
 let viewMode: ViewMode = "summary";
 let explodeInserts = true;
 let jwcCoordinates: JwcCoordinateSpace = "paper_millimeters";
+let viewZoom = 1, viewPanX = 0, viewPanY = 0, redrawQueued = false;
+const pointers = new Map<number, {x:number,y:number}>();
+type Gesture = {mode:"pan"; origin:{x:number,y:number}; panX:number; panY:number}
+  | {mode:"pinch"; distance:number; zoom:number; anchor:{x:number,y:number}};
+let gesture: Gesture | null = null;
 
 app.innerHTML = `
   <header class="topbar">
@@ -96,6 +101,12 @@ app.innerHTML = `
           <button class="tab" data-tab="entities" type="button">一覧</button>
           <button class="tab" data-tab="json" type="button">JSON</button>
         </div>
+        <div class="preview-zoom-controls" aria-label="図面表示操作">
+          <button id="zoom-out" type="button">－</button>
+          <span id="zoom-level">100%</span>
+          <button id="zoom-in" type="button">＋</button>
+          <button id="zoom-fit" type="button">全体</button>
+        </div>
       </div>
       <canvas id="preview-canvas" class="preview" width="1200" height="760"></canvas>
       <div id="detail" class="detail"></div>
@@ -113,6 +124,90 @@ const coordinateSelect = document.querySelector<HTMLSelectElement>("#coordinate-
 const downloadButton = document.querySelector<HTMLButtonElement>("#download-button")!;
 const createButton = document.querySelector<HTMLButtonElement>("#create-button")!;
 const downloadJwwButton = document.querySelector<HTMLButtonElement>("#download-jww-button")!;
+
+const zoomLevel = document.querySelector<HTMLSpanElement>("#zoom-level")!;
+function redrawZoom(): void {
+  zoomLevel.textContent = Math.round(viewZoom * 100) + "%";
+  if (redrawQueued) return;
+  redrawQueued = true;
+  requestAnimationFrame(() => {
+    redrawQueued = false;
+    renderPreview(parsedState);
+  });
+}
+function resetZoom(): void {
+  viewZoom = 1; viewPanX = 0; viewPanY = 0;
+  zoomLevel.textContent = "100%";
+}
+function zoomAt(factor: number, pos:{x:number,y:number}): void {
+  const r = canvas.getBoundingClientRect(), cx = r.width/2, cy = r.height/2;
+  const ax = (pos.x - cx - viewPanX)/viewZoom + cx;
+  const ay = (pos.y - cy - viewPanY)/viewZoom + cy;
+  viewZoom = Math.min(32, Math.max(0.5, viewZoom * factor));
+  viewPanX = pos.x - cx - (ax-cx)*viewZoom;
+  viewPanY = pos.y - cy - (ay-cy)*viewZoom;
+  redrawZoom();
+}
+function localPoint(e:PointerEvent):{x:number,y:number} {
+  const r=canvas.getBoundingClientRect();
+  return {x:e.clientX-r.left, y:e.clientY-r.top};
+}
+function startGesture():void {
+  const arr=Array.from(pointers.values());
+  if (!arr.length) { gesture=null; return; }
+  if (arr.length===1) {
+    gesture={mode:"pan",origin:{...arr[0]},panX:viewPanX,panY:viewPanY};
+  } else {
+    const [a,b]=arr, mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+    const r=canvas.getBoundingClientRect(),cx=r.width/2,cy=r.height/2;
+    gesture={mode:"pinch",distance:Math.max(1,Math.hypot(b.x-a.x,b.y-a.y)),
+      zoom:viewZoom,anchor:{x:(mid.x-cx-viewPanX)/viewZoom+cx,y:(mid.y-cy-viewPanY)/viewZoom+cy}};
+  }
+}
+canvas.addEventListener("pointerdown",e=>{
+  if(e.pointerType==="mouse"&&e.button!==0)return;
+  e.preventDefault();pointers.set(e.pointerId,localPoint(e));
+  canvas.setPointerCapture(e.pointerId);startGesture();
+});
+canvas.addEventListener("pointermove",e=>{
+  if(!pointers.has(e.pointerId))return;
+  e.preventDefault();pointers.set(e.pointerId,localPoint(e));
+  const arr=Array.from(pointers.values());
+  if(!gesture)return;
+  if(arr.length===1&&gesture.mode==="pan"){
+    viewPanX=gesture.panX+arr[0].x-gesture.origin.x;
+    viewPanY=gesture.panY+arr[0].y-gesture.origin.y;
+  }else if(arr.length>=2&&gesture.mode==="pinch"){
+    const [a,b]=arr,mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+    viewZoom=Math.min(32,Math.max(0.5,gesture.zoom*Math.hypot(b.x-a.x,b.y-a.y)/gesture.distance));
+    const r=canvas.getBoundingClientRect(),cx=r.width/2,cy=r.height/2;
+    viewPanX=mid.x-cx-(gesture.anchor.x-cx)*viewZoom;
+    viewPanY=mid.y-cy-(gesture.anchor.y-cy)*viewZoom;
+  }
+  redrawZoom();
+});
+function endGesture(e:PointerEvent):void {
+  if(!pointers.has(e.pointerId))return;
+  pointers.delete(e.pointerId);startGesture();
+}
+canvas.addEventListener("pointerup",endGesture);
+canvas.addEventListener("pointercancel",endGesture);
+canvas.addEventListener("lostpointercapture",endGesture);
+canvas.addEventListener("wheel",e=>{
+  e.preventDefault();
+  const r=canvas.getBoundingClientRect();
+  zoomAt(Math.exp(-e.deltaY*0.002),{x:e.clientX-r.left,y:e.clientY-r.top});
+},{passive:false});
+document.querySelector<HTMLButtonElement>("#zoom-in")!.addEventListener("click",()=>{
+  const r=canvas.getBoundingClientRect();zoomAt(1.5,{x:r.width/2,y:r.height/2});
+});
+document.querySelector<HTMLButtonElement>("#zoom-out")!.addEventListener("click",()=>{
+  const r=canvas.getBoundingClientRect();zoomAt(1/1.5,{x:r.width/2,y:r.height/2});
+});
+document.querySelector<HTMLButtonElement>("#zoom-fit")!.addEventListener("click",()=>{
+  resetZoom();redrawZoom();
+});
+
 createButton.addEventListener("click", () => { void createDrawing(); });
 downloadJwwButton.addEventListener("click", () => {
   if (!parsedState?.generatedJww) return;
@@ -199,6 +294,7 @@ async function reparseCurrentInput(): Promise<void> {
 }
 
 async function parseFile(file: File): Promise<void> {
+  resetZoom();
   const bytes = new Uint8Array(await file.arrayBuffer());
   currentInput = {
     name: file.name,
@@ -221,6 +317,7 @@ async function loadSample(): Promise<void> {
       size: bytes.byteLength,
       bytes,
     };
+    resetZoom();
     await parseBytes(currentInput);
   } catch (error) {
     statusLine.textContent = error instanceof Error ? error.message : String(error);
@@ -261,6 +358,7 @@ async function createDrawing(): Promise<void> {
     );
     const bytes = toJwwBytes(drawing);
     currentInput = { name: "created.jww", size: bytes.byteLength, bytes, generated: true };
+    resetZoom();
     await parseBytes(currentInput);
   } catch (error) {
     statusLine.textContent = error instanceof Error ? error.message : String(error);
@@ -520,17 +618,22 @@ function drawDxf(
   ];
 
   drawGrid(context, width, height);
+  context.save();
+  context.translate(width/2 + viewPanX, height/2 + viewPanY);
+  context.scale(viewZoom, viewZoom);
+  context.translate(-width/2, -height/2);
   context.lineCap = "round";
   context.lineJoin = "round";
 
   for (const entity of visible) {
     context.strokeStyle = isJwc ? ({132: "#00a5a5", 18: "#260000", 92: "#00a500", 52: "#a5a500", 212: "#a500a5"} as Record<number, string>)[entity.color] ?? colorFor(entity.color) : colorFor(entity.color);
     context.fillStyle = context.strokeStyle;
-    context.lineWidth = 1.2;
+    context.lineWidth = 1.2 / viewZoom;
     const dash = entity.line_type === "JWC_DASHED1" ? 1.25 : entity.line_type === "JWC_DASHED2" ? 2.5 : 0;
     context.setLineDash(dash ? [dash * scale, dash * scale] : []);
     drawEntity(context, entity, toScreen, scale, widths.get(entity));
   }
+  context.restore();
 }
 
 function drawEntity(
