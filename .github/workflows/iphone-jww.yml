@@ -1,0 +1,81 @@
+name: Build iPhone JWW browser viewer
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/iphone-jww.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout ezjww source
+        uses: actions/checkout@v4
+      - name: Install Rust with WASM target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pnpm
+        run: npm install -g pnpm@9.15.1
+      - name: Install dependencies
+        working-directory: packages/ezjww
+        run: pnpm install --frozen-lockfile
+      - name: Allow iPhone file picker to select JWW
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('packages/ezjww/examples/browser/src/main.ts')
+          s=p.read_text(encoding='utf-8')
+          old='accept=".jww,.jwc,.jws,application/octet-stream"'
+          assert old in s, 'Upstream file input changed: inspect main.ts'
+          p.write_text(s.replace(old,'',1),encoding='utf-8')
+          PY
+      - name: Build browser sample WASM
+        working-directory: packages/ezjww
+        run: |
+          pnpm run example:browser:sample
+          pnpm run example:browser:wasm
+          pnpm exec tsc -p examples/browser/tsconfig.json
+          pnpm exec vite build examples/browser --base "/${GITHUB_REPOSITORY#*/}/"
+      - name: Validate WASM file nonempty and magic header
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          files=list(Path('packages/ezjww/examples/browser/dist').rglob('*.wasm'))
+          assert files, 'WASM not found in browser output'
+          for p in files:
+              h=p.open('rb').read(8)
+              print(p, 'bytes=',p.stat().st_size, 'header=',h.hex())
+              assert h==bytes.fromhex('0061736d01000000'), f'Invalid WebAssembly: {p}'
+          PY
+      - name: Upload browser build for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: ezjww-browser-build
+          path: packages/ezjww/examples/browser/dist
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload Pages content
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/ezjww/examples/browser/dist
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
