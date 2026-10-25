@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 mod writer;
@@ -166,6 +166,91 @@ pub fn read_preview_dxf_document(
     }
     let dxf_document = convert_document_with_options(&document, options);
     to_js_value(&dxf_document)
+}
+
+/// A single, verified text replacement in the DXF conversion.
+#[derive(Deserialize)]
+struct EditedDxfText {
+    before: String,
+    after: String,
+    layer: String,
+    x: f64,
+    y: f64,
+    rotation: f64,
+}
+
+/// Save edited TEXT entities in a separate DXF without modifying JWW source data.
+///
+/// Only a TEXT with a unique original content/layer/position/rotation match
+/// can be changed; ambiguous or missing matches fail before writing any file.
+#[wasm_bindgen(js_name = readEditedDxfString)]
+pub fn read_edited_dxf_string(
+    data: &[u8],
+    explode_inserts: bool,
+    edits: JsValue,
+) -> Result<String, JsValue> {
+    if !is_jww_signature(data) {
+        return Err(js_error("Edited DXF export currently supports JWW files only"));
+    }
+    let edits: Vec<EditedDxfText> = serde_wasm_bindgen::from_value(edits)
+        .map_err(|error| js_error(&format!("Invalid text edits: {error}")))?;
+    if edits.is_empty() {
+        return Err(js_error("No text changes to export"));
+    }
+    let doc = parse_document(data).map_err(to_js_error)?;
+    let mut dxf_doc = convert_document_with_options(
+        &doc,
+        ConvertOptions {
+            explode_inserts,
+            max_block_nesting: 32,
+            text_em_scale: 1.0,
+        },
+    );
+    let mut edited_indices = std::collections::HashSet::new();
+    for edit in edits {
+        if edit.after.is_empty()
+            || !edit.x.is_finite()
+            || !edit.y.is_finite()
+            || !edit.rotation.is_finite()
+        {
+            return Err(js_error("Invalid empty or non-finite text edit"));
+        }
+        let matches: Vec<usize> = dxf_doc
+            .entities
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entity)| match entity {
+                ezjww_core::DxfEntity::Text(text)
+                    if text.content == edit.before
+                        && text.layer == edit.layer
+                        && (text.x - edit.x).abs() < 1e-7
+                        && (text.y - edit.y).abs() < 1e-7
+                        && (text.rotation - edit.rotation).abs() < 1e-7 =>
+                {
+                    Some(index)
+                }
+                _ => None,
+            })
+            .collect();
+        if matches.len() != 1 {
+            return Err(js_error(&format!(
+                "Text edit was not uniquely matched: {} ({} matches)",
+                edit.before,
+                matches.len()
+            )));
+        }
+        let index = matches[0];
+        if !edited_indices.insert(index) {
+            return Err(js_error("Duplicate replacement of the same text"));
+        }
+        if let ezjww_core::DxfEntity::Text(ref mut text) = dxf_doc.entities[index] {
+            text.content = edit.after;
+        }
+    }
+    Ok(document_to_string_with_version(
+        &dxf_doc,
+        ezjww_core::DxfTargetVersion::Ac1015,
+    ))
 }
 
 #[wasm_bindgen(js_name = readDxfString)]

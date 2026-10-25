@@ -2,6 +2,7 @@ import initWasm, {
   detectFileFormat,
   readCadDocument,
   readPreviewDxfDocument,
+  readEditedDxfString,
   readDxfString,
   newJwwDocument,
   toJwwBytes,
@@ -69,6 +70,8 @@ let tapCandidate: { id: number; x: number; y: number; valid: boolean } | null = 
 type TextChange = { index: number; before: string; after: string };
 const textUndoStack: TextChange[] = [];
 const textRedoStack: TextChange[] = [];
+type OriginalText = { before: string; layer: string; x: number; y: number; rotation: number };
+const originalText = new Map<number, OriginalText>();
 
 app.innerHTML = `
   <header class="topbar">
@@ -85,6 +88,7 @@ app.innerHTML = `
         <select id="coordinate-select"><option value="paper_millimeters">紙上mm</option><option value="model_millimeters">実寸mm</option></select>
       </label>
       <button id="download-button" class="tool-button" type="button" disabled>DXF保存（原図）</button>
+      <button id="download-edited-dxf" class="tool-button" type="button" disabled>編集DXF保存</button>
       <button id="sample-button" class="tool-button" type="button">サンプル読込</button>
       <button id="create-button" class="tool-button" type="button">JWW作成例</button>
       <button id="download-jww-button" class="tool-button" type="button" disabled>生成JWW保存</button>
@@ -169,6 +173,7 @@ const sampleButton = document.querySelector<HTMLButtonElement>("#sample-button")
 const canvas = document.querySelector<HTMLCanvasElement>("#preview-canvas")!;
 const coordinateSelect = document.querySelector<HTMLSelectElement>("#coordinate-select")!;
 const downloadButton = document.querySelector<HTMLButtonElement>("#download-button")!;
+const downloadEditedDxf = document.querySelector<HTMLButtonElement>("#download-edited-dxf")!;
 const createButton = document.querySelector<HTMLButtonElement>("#create-button")!;
 const downloadJwwButton = document.querySelector<HTMLButtonElement>("#download-jww-button")!;
 const textEditPanel = document.querySelector<HTMLDivElement>("#text-edit-panel")!;
@@ -334,6 +339,46 @@ downloadButton.addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
+
+function effectiveTextChanges(): Array<OriginalText & { after: string }> {
+  const state = parsedState;
+  if (!state) return [];
+  const changes: Array<OriginalText & { after: string }> = [];
+  for (const [index, original] of originalText) {
+    const entity = state.dxf.entities[index];
+    if (entity?.type === "TEXT" && typeof entity.content === "string" &&
+        entity.content !== original.before) {
+      changes.push({ ...original, after: entity.content });
+    }
+  }
+  return changes;
+}
+function saveDownload(content: string, filename: string): void {
+  const url = URL.createObjectURL(new Blob([content], { type: "application/dxf" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+downloadEditedDxf.addEventListener("click", () => {
+  if (!parsedState || !currentInput) return;
+  const changes = effectiveTextChanges();
+  if (!changes.length) return;
+  try {
+    // Export from the original JWW, validating each changed text against the
+    // unfiltered CAD conversion. Auxiliary geometry is never deleted here.
+    const edited = readEditedDxfString(currentInput.bytes, explodeInserts, changes);
+    const filename = parsedState.fileName.replace(/\.[^.]*$/, "") + "_文字変更.dxf";
+    saveDownload(edited, filename);
+    textEditNote.textContent = "編集済DXFを別名で保存しました。原JWWは変更していません。";
+  } catch (error) {
+    const description = error instanceof Error ? error.message : String(error);
+    textEditNote.textContent = "編集DXF保存に失敗：" + description;
+    alert("編集DXF保存に失敗しました。データは変更されていません。\n" + description);
+  }
+});
+
 void ensureWasm().then(() => {
   statusLine.textContent = "待機中";
 });
@@ -470,6 +515,7 @@ async function parseBytes(input: CurrentInput): Promise<void> {
   textHits = [];
   textUndoStack.length = 0;
   textRedoStack.length = 0;
+  originalText.clear();
   statusLine.textContent = "読込中";
   try {
     await ensureWasm();
@@ -515,6 +561,7 @@ function render(): void {
   renderCounts(parsedState);
   renderLayers(parsedState?.cad ?? null);
   downloadButton.disabled = !parsedState;
+  downloadEditedDxf.disabled = !parsedState || parsedState.cad.format !== "jww" || effectiveTextChanges().length === 0;
   downloadJwwButton.disabled = !parsedState?.generatedJww;
   coordinateSelect.disabled = parsedState?.cad.format !== "jwc";
   renderPreview(parsedState);
@@ -979,14 +1026,16 @@ function updateTextEditControls(): void {
   textEditUndo.disabled = textUndoStack.length === 0;
   textEditRedo.disabled = textRedoStack.length === 0;
   textEditClear.disabled = !entity;
+  downloadEditedDxf.disabled = !parsedState || parsedState.cad.format !== "jww" || effectiveTextChanges().length === 0;
 }
 function syncTextEditPanel(): void {
   const entity = selectedTextEntity();
   textEditPanel.hidden = !parsedState;
   textEditInput.disabled = !entity;
   textEditInput.value = entity?.content ?? "";
-  textEditNote.textContent = "表示用の文字変更：" + textUndoStack.length +
-    "件。元JWWとDXF保存データは変更しません。";
+  textEditNote.textContent = "変更履歴：" + textUndoStack.length +
+    "件／現在の変更文字：" + effectiveTextChanges().length +
+    "件。編集DXFは別名で保存します。JWW原図は変更しません。";
   updateTextEditControls();
 }
 function applyTextEdit(): void {
@@ -994,8 +1043,23 @@ function applyTextEdit(): void {
   if (!entity) return;
   const after = textEditInput.value;
   if (after.length === 0 || entity.content === after) return;
+  const index = selectedTextIndex!;
+  if (!originalText.has(index)) {
+    const original = entity;
+    if (typeof original.x !== "number" || typeof original.y !== "number") {
+      textEditNote.textContent = "この文字は座標情報が不足しているため編集DXFを保存できません。";
+      return;
+    }
+    originalText.set(index, {
+      before: original.content!,
+      layer: original.layer,
+      x: original.x,
+      y: original.y,
+      rotation: original.rotation ?? 0,
+    });
+  }
   const change: TextChange = {
-    index: selectedTextIndex!, before: entity.content!, after,
+    index, before: entity.content!, after,
   };
   textUndoStack.push(change);
   textRedoStack.length = 0;
