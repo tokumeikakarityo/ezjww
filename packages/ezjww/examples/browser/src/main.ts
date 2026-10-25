@@ -846,7 +846,21 @@ function drawDxf(
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  for (const [index, entity] of visible.entries()) {
+  // V021: CAD drawing order (bottom -> top): SOLID, geometry, TEXT.
+  // Keep the original sequence *inside each group*, and retain each entity's
+  // original visible index for hit-testing and native-text mapping.
+  const solidIndices: number[] = [];
+  const geometryIndices: number[] = [];
+  const textIndices: number[] = [];
+  for (let i = 0; i < visible.length; i++) {
+    const type = visible[i].type;
+    if (type === "SOLID") solidIndices.push(i);
+    else if (type === "TEXT") textIndices.push(i);
+    else geometryIndices.push(i);
+  }
+  const drawOrder = [...solidIndices, ...geometryIndices, ...textIndices];
+  for (const index of drawOrder) {
+    const entity = visible[index];
     // White background retains V018 display colors. Black uses the
     // source JWW palette converted to DXF ACI by ezjww (an approximation
     // when JWW used arbitrary user-customized RGB colors).
@@ -868,6 +882,8 @@ function drawDxf(
       context.setLineDash([]);
     }
     drawEntity(context, entity, toScreen, scale, widths.get(entity));
+    // Text glyphs now render after all lines/circles/points, so they appear
+    // in front. Preserve the original array index for text selection.
     if (entity.type === "TEXT" && hasNumbers(entity, "x", "y") && entity.content) {
       const [baseX,baseY] = toScreen(entity.x,entity.y);
       const fontHeight = Math.max(0.1,(entity.height ?? 2.5)*scale);
