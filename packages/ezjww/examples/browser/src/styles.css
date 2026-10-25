@@ -421,3 +421,18 @@ h1 {
   font-weight:700;touch-action:manipulation;
 }
 #zoom-level {min-width:50px;text-align:center;font-size:13px;color:#303846}
+
+
+/* V011: selection status without changing the drawing layout or gestures. */
+.text-selection-status {
+  flex-basis:100%;
+  min-width:0;
+  padding:7px 9px;
+  color:#334155;
+  background:#f5f8fc;
+  border:1px solid #cbd5e1;
+  border-radius:6px;
+  font-size:13px;
+  line-height:1.5;
+  overflow-wrap:anywhere;
+}

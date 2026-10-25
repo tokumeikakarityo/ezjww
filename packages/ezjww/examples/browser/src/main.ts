@@ -53,6 +53,16 @@ type Gesture = {mode:"pan"; origin:{x:number,y:number}; panX:number; panY:number
   | {mode:"pinch"; distance:number; zoom:number; anchor:{x:number,y:number}};
 let gesture: Gesture | null = null;
 
+/* V011: text hit-testing uses the DXF view returned by ezjww.
+   No input JWW data is modified and no JWW write-back is attempted. */
+type TextHit = {
+  index: number; content: string; layer: string;
+  x: number; y: number; width: number; height: number; angle: number;
+};
+let textHits: TextHit[] = [];
+let selectedTextIndex: number | null = null;
+let tapCandidate: { id: number; x: number; y: number; valid: boolean } | null = null;
+
 app.innerHTML = `
   <header class="topbar">
     <div>
@@ -106,6 +116,9 @@ app.innerHTML = `
           <span id="zoom-level">100%</span>
           <button id="zoom-in" type="button">＋</button>
           <button id="zoom-fit" type="button">全体</button>
+        </div>
+        <div id="text-selection-status" class="text-selection-status" role="status" aria-live="polite">
+          V011：図面を拡大し、文字をタップすると内容とレイヤを表示します（選択のみ）。
         </div>
       </div>
       <canvas id="preview-canvas" class="preview" width="1200" height="760"></canvas>
@@ -166,12 +179,25 @@ function startGesture():void {
 }
 canvas.addEventListener("pointerdown",e=>{
   if(e.pointerType==="mouse"&&e.button!==0)return;
-  e.preventDefault();pointers.set(e.pointerId,localPoint(e));
+  e.preventDefault();
+  const point = localPoint(e);
+  pointers.set(e.pointerId,point);
+  if (pointers.size === 1) {
+    tapCandidate = { id:e.pointerId, x:point.x, y:point.y, valid:true };
+  } else if (tapCandidate) {
+    tapCandidate.valid = false;
+  }
   canvas.setPointerCapture(e.pointerId);startGesture();
 });
 canvas.addEventListener("pointermove",e=>{
   if(!pointers.has(e.pointerId))return;
-  e.preventDefault();pointers.set(e.pointerId,localPoint(e));
+  e.preventDefault();
+  const point=localPoint(e);
+  pointers.set(e.pointerId,point);
+  if(tapCandidate && e.pointerId===tapCandidate.id &&
+    Math.hypot(point.x-tapCandidate.x,point.y-tapCandidate.y)>9) {
+    tapCandidate.valid=false;
+  }
   const arr=Array.from(pointers.values());
   if(!gesture)return;
   if(arr.length===1&&gesture.mode==="pan"){
@@ -188,7 +214,14 @@ canvas.addEventListener("pointermove",e=>{
 });
 function endGesture(e:PointerEvent):void {
   if(!pointers.has(e.pointerId))return;
-  pointers.delete(e.pointerId);startGesture();
+  const point=localPoint(e);
+  const shouldPick=e.type==="pointerup" && pointers.size===1 &&
+    tapCandidate?.id===e.pointerId && tapCandidate.valid &&
+    Math.hypot(point.x-tapCandidate.x,point.y-tapCandidate.y)<=9;
+  pointers.delete(e.pointerId);
+  if(tapCandidate?.id===e.pointerId)tapCandidate=null;
+  startGesture();
+  if(shouldPick)selectTextAt(point);
 }
 canvas.addEventListener("pointerup",endGesture);
 canvas.addEventListener("pointercancel",endGesture);
@@ -366,6 +399,8 @@ async function createDrawing(): Promise<void> {
 }
 
 async function parseBytes(input: CurrentInput): Promise<void> {
+  selectedTextIndex = null;
+  textHits = [];
   statusLine.textContent = "読込中";
   try {
     await ensureWasm();
@@ -509,6 +544,8 @@ function renderPreview(state: ParsedState | null): void {
 
   if (!state) {
     meta.textContent = "No drawing";
+    textHits = [];
+    updateTextSelectionStatus();
     drawEmptyPreview(context, rect.width, rect.height);
     return;
   }
@@ -589,6 +626,7 @@ function drawDxf(
   dxf: DxfDocument,
 ): void {
   const isJwc = !!dxf.jwc_conversion_report;
+  textHits = [];
   const hidden = new Set(isJwc ? dxf.layers.filter(layer => layer.frozen).map(layer => layer.name) : []);
   const widths = new Map<DxfEntity, number>();
   let textIndex = 0;
@@ -625,15 +663,35 @@ function drawDxf(
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  for (const entity of visible) {
+  for (const [index, entity] of visible.entries()) {
     context.strokeStyle = isJwc ? ({132: "#00a5a5", 18: "#260000", 92: "#00a500", 52: "#a5a500", 212: "#a500a5"} as Record<number, string>)[entity.color] ?? colorFor(entity.color) : colorFor(entity.color);
     context.fillStyle = context.strokeStyle;
     context.lineWidth = 1.2 / viewZoom;
     const dash = entity.line_type === "JWC_DASHED1" ? 1.25 : entity.line_type === "JWC_DASHED2" ? 2.5 : 0;
     context.setLineDash(dash ? [dash * scale, dash * scale] : []);
     drawEntity(context, entity, toScreen, scale, widths.get(entity));
+    if (entity.type === "TEXT" && hasNumbers(entity, "x", "y") && entity.content) {
+      const [baseX,baseY] = toScreen(entity.x,entity.y);
+      const fontHeight = Math.max(0.1,(entity.height ?? 2.5)*scale);
+      const widthFactor = textWidthFactorFor(entity,widths.get(entity));
+      context.save();
+      context.font = fontHeight + "px sans-serif";
+      const measuredWidth = context.measureText(entity.content).width * widthFactor;
+      context.restore();
+      const centerX=width/2,centerY=height/2;
+      textHits.push({
+        index,content:entity.content,layer:entity.layer,
+        x:centerX+viewPanX+(baseX-centerX)*viewZoom,
+        y:centerY+viewPanY+(baseY-centerY)*viewZoom,
+        width:Math.max(0.5,measuredWidth*viewZoom),
+        height:Math.max(0.5,fontHeight*viewZoom),
+        angle:-degToRad(entity.rotation ?? 0),
+      });
+    }
   }
   context.restore();
+  drawSelectedTextHighlight(context);
+  updateTextSelectionStatus();
 }
 
 function drawEntity(
@@ -703,20 +761,68 @@ function drawEntity(
 
   if (entity.type === "TEXT" && hasNumbers(entity, "x", "y")) {
     const [x, y] = toScreen(entity.x, entity.y);
-    if (textWidthFactor !== undefined) {
-      context.save();
-      context.translate(x, y);
-      context.rotate(-degToRad(entity.rotation ?? 0));
-      context.scale(textWidthFactor, 1);
-      context.font = `${Math.max(0.1, (entity.height ?? 2.5) * scale)}px sans-serif`;
-      context.textAlign = "left";
-      context.textBaseline = "alphabetic";
-      context.fillText(entity.content ?? "", 0, 0);
-      context.restore();
-    } else {
-      context.fillRect(x - 2, y - 2, 4, 4);
-    }
+    context.save();
+    context.translate(x, y);
+    context.rotate(-degToRad(entity.rotation ?? 0));
+    context.scale(textWidthFactorFor(entity, textWidthFactor), 1);
+    context.font = `${Math.max(0.1, (entity.height ?? 2.5) * scale)}px sans-serif`;
+    context.textAlign = "left";
+    context.textBaseline = "alphabetic";
+    context.fillText(entity.content ?? "", 0, 0);
+    context.restore();
+    return;
   }
+}
+
+
+function textWidthFactorFor(entity:DxfEntity, fromJwc?:number):number {
+  const f=fromJwc ?? entity.width_factor ?? 1;
+  return Number.isFinite(f) ? Math.max(0.1,Math.min(10,f)) : 1;
+}
+function selectedHit():TextHit | undefined {
+  return textHits.find(t=>t.index===selectedTextIndex);
+}
+function updateTextSelectionStatus():void {
+  const el=document.querySelector<HTMLDivElement>("#text-selection-status")!;
+  const selected=selectedHit();
+  if(selected) {
+    el.textContent="選択文字: 「"+selected.content+"」 / レイヤ: "+selected.layer+
+      "（JWW→DXF表示上の文字。編集・保存は未実装）";
+  } else {
+    el.textContent=parsedState
+      ? "V011：文字候補 "+textHits.length+"件。拡大して文字をタップしてください（選択のみ）。"
+      : "V011：図面を開いて文字をタップしてください（選択のみ）。";
+  }
+}
+function selectTextAt(point:{x:number,y:number}):void {
+  let best:TextHit|undefined, bestDistance=Number.POSITIVE_INFINITY;
+  for(const t of textHits) {
+    // Undo the display rotation so hit areas match angled CAD text.
+    const dx=point.x-t.x,dy=point.y-t.y;
+    const c=Math.cos(t.angle),s=Math.sin(t.angle);
+    const lx=c*dx+s*dy,ly=-s*dx+c*dy;
+    const outsideX=Math.max(0,-lx,lx-t.width);
+    const outsideY=Math.max(0,-t.height-ly,ly);
+    const dist=Math.hypot(outsideX,outsideY);
+    if(dist<=10 && dist<bestDistance) {best=t;bestDistance=dist;}
+  }
+  selectedTextIndex=best?.index ?? null;
+  redrawZoom();
+}
+function drawSelectedTextHighlight(ctx:CanvasRenderingContext2D):void {
+  const t=selectedHit();
+  if(!t)return;
+  ctx.save();
+  ctx.translate(t.x,t.y);
+  ctx.rotate(t.angle);
+  ctx.fillStyle="rgba(253,186,56,0.20)";
+  ctx.strokeStyle="#f59e0b";
+  ctx.lineWidth=2;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.rect(-3,-t.height-4,t.width+6,t.height+8);
+  ctx.fill();ctx.stroke();
+  ctx.restore();
 }
 
 function drawArcPolyline(
