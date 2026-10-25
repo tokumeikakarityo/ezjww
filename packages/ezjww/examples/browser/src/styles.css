@@ -457,3 +457,16 @@ h1 {
   font: inherit;
   touch-action: manipulation;
 }
+
+/* V012: compact line-style diagnostics; preserve the existing preview sizing. */
+.line-style-status {
+  flex-basis: 100%;
+  min-width: 0;
+  padding: 5px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #526075;
+  font-size: 12px;
+  line-height: 1.45;
+}

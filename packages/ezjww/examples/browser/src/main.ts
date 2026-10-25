@@ -790,8 +790,10 @@ function previewDashPattern(
   const smallest = Math.min(...lengths) * baseScale * zoom;
   const largest = Math.max(...lengths) * baseScale * zoom;
   // Minimum legibility ~1.5 CSS px; cap the longest segment at 72 CSS px.
-  const boost = Math.min(1.5 / Math.max(smallest, 1e-9), 72 / Math.max(largest, 1e-9));
-  const factor = Math.max(0.01, boost < 1 ? boost : Math.max(1, boost));
+  // Preserve original spacing once the pattern is already legible.
+  let factor = smallest < 1.5 ? 1.5 / Math.max(smallest, 1e-9) : 1;
+  if (largest * factor > 72) factor = 72 / Math.max(largest, 1e-9);
+  factor = Math.max(0.01, Math.min(64, factor));
   return pattern.map(mm => mm === 0 ? 0.6 / zoom : Math.max(0.03, Math.abs(mm) * baseScale * factor));
 }
 
