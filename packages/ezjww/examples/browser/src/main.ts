@@ -52,6 +52,9 @@ let viewZoom = 1, viewPanX = 0, viewPanY = 0, redrawQueued = false;
 // Preview-only POINT display size in CSS pixels at 100% zoom.
 const pointDisplayRadius = 0.75;
 let showJwwLineTypes = true;
+let canvasBackground: "white" | "black" = "white";
+// Twofold increase from the V018 32x limit; bounded for iPhone precision.
+const MAX_VIEW_ZOOM = 64;
 const pointers = new Map<number, {x:number,y:number}>();
 type Gesture = {mode:"pan"; origin:{x:number,y:number}; panX:number; panY:number}
   | {mode:"pinch"; distance:number; zoom:number; anchor:{x:number,y:number}};
@@ -125,6 +128,12 @@ app.innerHTML = `
             <select id="line-style-select" aria-label="線種表示">
               <option value="original" selected>原図</option>
               <option value="solid">実線で表示</option>
+            </select>
+          </label>
+          <label class="point-size-control">背景
+            <select id="canvas-background-select" aria-label="図面の背景色">
+              <option value="white" selected>白</option>
+              <option value="black">黒</option>
             </select>
           </label>
         </div>
@@ -202,7 +211,7 @@ function zoomAt(factor: number, pos:{x:number,y:number}): void {
   const r = canvas.getBoundingClientRect(), cx = r.width/2, cy = r.height/2;
   const ax = (pos.x - cx - viewPanX)/viewZoom + cx;
   const ay = (pos.y - cy - viewPanY)/viewZoom + cy;
-  viewZoom = Math.min(32, Math.max(0.5, viewZoom * factor));
+  viewZoom = Math.min(MAX_VIEW_ZOOM, Math.max(0.5, viewZoom * factor));
   viewPanX = pos.x - cx - (ax-cx)*viewZoom;
   viewPanY = pos.y - cy - (ay-cy)*viewZoom;
   redrawZoom();
@@ -251,7 +260,7 @@ canvas.addEventListener("pointermove",e=>{
     viewPanY=gesture.panY+arr[0].y-gesture.origin.y;
   }else if(arr.length>=2&&gesture.mode==="pinch"){
     const [a,b]=arr,mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
-    viewZoom=Math.min(32,Math.max(0.5,gesture.zoom*Math.hypot(b.x-a.x,b.y-a.y)/gesture.distance));
+    viewZoom=Math.min(MAX_VIEW_ZOOM,Math.max(0.5,gesture.zoom*Math.hypot(b.x-a.x,b.y-a.y)/gesture.distance));
     const r=canvas.getBoundingClientRect(),cx=r.width/2,cy=r.height/2;
     viewPanX=mid.x-cx-(gesture.anchor.x-cx)*viewZoom;
     viewPanY=mid.y-cy-(gesture.anchor.y-cy)*viewZoom;
@@ -290,6 +299,10 @@ function fitWholeDrawing(): void {
 floatingFitButton.addEventListener("click", fitWholeDrawing);
 document.querySelector<HTMLSelectElement>("#line-style-select")!.addEventListener("change", e => {
   showJwwLineTypes = (e.currentTarget as HTMLSelectElement).value === "original";
+  redrawZoom();
+});
+document.querySelector<HTMLSelectElement>("#canvas-background-select")!.addEventListener("change", e => {
+  canvasBackground = (e.currentTarget as HTMLSelectElement).value === "black" ? "black" : "white";
   redrawZoom();
 });
 // Keep editing separate from the gesture controls and the original DXF exporter.
@@ -659,7 +672,7 @@ function renderPreview(state: ParsedState | null): void {
   canvas.height = Math.max(1, Math.floor(rect.height * dpr));
   context.setTransform(dpr, 0, 0, dpr, 0, 0);
   context.clearRect(0, 0, rect.width, rect.height);
-  context.fillStyle = "#f7f8fb";
+  context.fillStyle = canvasBackground === "black" ? "#000000" : "#f7f8fb";
   context.fillRect(0, 0, rect.width, rect.height);
 
   if (!state) {
@@ -786,7 +799,8 @@ function drawDxf(
     height - offsetY - (y - bounds.minY) * scale,
   ];
 
-  drawGrid(context, width, height);
+  // Jw_cad black canvas does not show the light-mode checking grid.
+  if (canvasBackground === "white") drawGrid(context, width, height);
   context.save();
   context.translate(width/2 + viewPanX, height/2 + viewPanY);
   context.scale(viewZoom, viewZoom);
@@ -795,7 +809,13 @@ function drawDxf(
   context.lineJoin = "round";
 
   for (const [index, entity] of visible.entries()) {
-    context.strokeStyle = isJwc ? ({132: "#00a5a5", 18: "#260000", 92: "#00a500", 52: "#a5a500", 212: "#a500a5"} as Record<number, string>)[entity.color] ?? colorFor(entity.color) : colorFor(entity.color);
+    // White background retains V018 display colors. Black uses the
+    // source JWW palette converted to DXF ACI by ezjww (an approximation
+    // when JWW used arbitrary user-customized RGB colors).
+    const originalWhiteColor = isJwc
+      ? (({132: "#00a5a5", 18: "#260000", 92: "#00a500", 52: "#a5a500", 212: "#a500a5"} as Record<number, string>)[entity.color] ?? colorFor(entity.color))
+      : colorFor(entity.color);
+    context.strokeStyle = canvasBackground === "black" ? dxfAciColor(entity.color) : originalWhiteColor;
     context.fillStyle = context.strokeStyle;
     context.lineWidth = 1.2 / viewZoom;
     if (entity.type === "LINE" || entity.type === "ARC" ||
@@ -942,7 +962,12 @@ function drawEntity(
     const p2 = toScreen(entity.x2, entity.y2);
     const p3 = toScreen(entity.x3, entity.y3);
     const p4 = toScreen(entity.x4, entity.y4);
-    context.globalAlpha = 0.22;
+    context.save();
+    // Match the former light-mode tone, but make the fill opaque.
+    // Transparent fills produce dark overlap seams across adjoining SOLIDs.
+    const solidColor = String(context.fillStyle);
+    context.fillStyle = canvasBackground === "white"
+      ? solidColorOnWhite(solidColor) : solidColor;
     context.beginPath();
     context.moveTo(...p1);
     context.lineTo(...p2);
@@ -950,8 +975,14 @@ function drawEntity(
     context.lineTo(...p4);
     context.closePath();
     context.fill();
-    context.globalAlpha = 1;
+    // A hairline in the SAME fill color closes anti-alias gaps between
+    // adjoining polygons; unlike the old differently tinted boundary line,
+    // it cannot create a visible border on a same-color contiguous surface.
+    context.strokeStyle = context.fillStyle;
+    context.lineWidth = 0.7 / viewZoom;
+    context.setLineDash([]);
     context.stroke();
+    context.restore();
     return;
   }
 
@@ -1320,6 +1351,47 @@ function panelTitle(title: string): string {
 
 function emptyLine(): string {
   return `<div class="muted line">-</div>`;
+}
+
+
+/** ACI color palette, matching ezjww's DXF converter for JWW screen colors. */
+function dxfAciColor(raw: number): string {
+  const aci = Math.abs(Math.trunc(raw));
+  if (aci === 0 || aci === 7 || aci === 256) return "#ffffff";
+  const primaries = ["", "#ff0000", "#ffff00", "#00ff00", "#00ffff",
+    "#0000ff", "#ff00ff", "#ffffff", "#808080", "#c0c0c0"];
+  if (aci >= 1 && aci <= 9) return primaries[aci];
+  if (aci >= 250 && aci <= 255) {
+    const c = [0x54,0x76,0x98,0xbb,0xdd,0xff][aci-250];
+    return rgbCss(c,c,c);
+  }
+  if (aci >= 10 && aci <= 249) {
+    const group = Math.floor((aci - 10)/10), shade = (aci-10)%10;
+    const hi = [1,0.65,0.5,0.3,0.15][Math.floor(shade/2)];
+    const lo = shade%2 === 1 ? hi/2 : 0;
+    const k=(group%4)/4;
+    const rise=lo+(hi-lo)*k, fall=hi-(hi-lo)*k;
+    const triplets=[
+      [hi,rise,lo],[fall,hi,lo],[lo,hi,rise],
+      [lo,fall,hi],[rise,lo,hi],[hi,lo,fall],
+    ];
+    const [r,g,b]=triplets[Math.floor(group/4)];
+    return rgbCss(Math.round(255*r),Math.round(255*g),Math.round(255*b));
+  }
+  return "#ffffff";
+}
+function rgbCss(r:number,g:number,b:number): string {
+  const byte = (v:number) => Math.max(0,Math.min(255,v)).toString(16).padStart(2,"0");
+  return "#" + byte(r) + byte(g) + byte(b);
+}
+/** Light-mode SOLIDs keep roughly the V018 appearance, but are now opaque. */
+function solidColorOnWhite(color: string): string {
+  if (!/^#[0-9a-f]{6}$/i.test(color)) return color;
+  const n=parseInt(color.slice(1),16);
+  const bg=[247,248,251], amount=0.22;
+  const result=[(n>>16)&255,(n>>8)&255,n&255]
+    .map((v,i)=>Math.round(bg[i]*(1-amount)+v*amount));
+  return rgbCss(result[0],result[1],result[2]);
 }
 
 function colorFor(color: number): string {
