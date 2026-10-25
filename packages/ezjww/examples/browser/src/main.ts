@@ -50,7 +50,7 @@ let explodeInserts = true;
 let jwcCoordinates: JwcCoordinateSpace = "paper_millimeters";
 let viewZoom = 1, viewPanX = 0, viewPanY = 0, redrawQueued = false;
 // Preview-only POINT display size in CSS pixels at 100% zoom.
-let pointDisplayRadius = 1.2;
+const pointDisplayRadius = 0.75;
 let showJwwLineTypes = true;
 const pointers = new Map<number, {x:number,y:number}>();
 type Gesture = {mode:"pan"; origin:{x:number,y:number}; panX:number; panY:number}
@@ -77,21 +77,21 @@ app.innerHTML = `
   <header class="topbar">
     <div>
       <div class="eyebrow">ezjww</div>
-      <h1>Browser Parser</h1>
+      <h1>JWW簡易CAD</h1>
     </div>
     <div class="actions">
-      <label class="toggle">
+      <label class="toggle" hidden>
         <input id="explode-toggle" type="checkbox" checked />
-        <span>INSERT展開</span>
+        <span>INSERT展開（内部ON固定）</span>
       </label>
-      <label class="toggle">JWCの座標
+      <label class="toggle" hidden>JWCの座標
         <select id="coordinate-select"><option value="paper_millimeters">紙上mm</option><option value="model_millimeters">実寸mm</option></select>
       </label>
       <button id="download-button" class="tool-button" type="button" disabled>DXF保存（原図）</button>
       <button id="download-edited-dxf" class="tool-button" type="button" disabled>編集DXF保存</button>
-      <button id="sample-button" class="tool-button" type="button">サンプル読込</button>
-      <button id="create-button" class="tool-button" type="button">JWW作成例</button>
-      <button id="download-jww-button" class="tool-button" type="button" disabled>生成JWW保存</button>
+      <button id="sample-button" class="tool-button" type="button" hidden>サンプル読込</button>
+      <button id="create-button" class="tool-button" type="button" hidden>JWW作成例</button>
+      <button id="download-jww-button" class="tool-button" type="button" disabled hidden>生成JWW保存</button>
       <label class="file-button">
         <input id="file-input" type="file" accept=".jww,.jwc,.jws,application/octet-stream" />
         ファイル選択
@@ -117,23 +117,11 @@ app.innerHTML = `
           <div class="section-label">Preview</div>
           <div id="preview-meta" class="muted">No drawing</div>
         </div>
-        <div class="tabs" role="tablist" aria-label="表示切替">
-          <button class="tab active" data-tab="summary" type="button">概要</button>
-          <button class="tab" data-tab="entities" type="button">一覧</button>
-          <button class="tab" data-tab="json" type="button">JSON</button>
-        </div>
         <div class="preview-zoom-controls" aria-label="図面表示操作">
           <button id="zoom-out" type="button">－</button>
           <span id="zoom-level">100%</span>
           <button id="zoom-in" type="button">＋</button>
           <button id="zoom-fit" type="button">全体</button>
-          <label class="point-size-control">点の表示
-            <select id="point-size-select" aria-label="点の表示サイズ">
-              <option value="0.75">小</option>
-              <option value="1.2" selected>標準</option>
-              <option value="2">大</option>
-            </select>
-          </label>
           <label class="point-size-control">線種
             <select id="line-style-select" aria-label="線種表示">
               <option value="original" selected>原図</option>
@@ -168,7 +156,10 @@ app.innerHTML = `
           V013：補助線色・補助線種は常時非表示。ほかの線種を再現します。
         </div>
       </details>
-      <div id="detail" class="detail"></div>
+      <details class="developer-details">
+        <summary>開発用の詳細情報</summary>
+        <div id="detail" class="detail"></div>
+      </details>
     </section>
   </main>
   <button id="floating-fit-button" class="floating-fit-button" type="button" hidden aria-label="いつでも図面を全体表示">全体 ↺</button>
@@ -302,11 +293,6 @@ function fitWholeDrawing(): void {
 document.querySelector<HTMLButtonElement>("#zoom-fit")!.addEventListener("click", fitWholeDrawing);
 floatingFitButton.addEventListener("click", fitWholeDrawing);
 canvasFitButton.addEventListener("click", fitWholeDrawing);
-// Display-only option: neither JWW bytes nor CAD coordinate attributes are modified.
-document.querySelector<HTMLSelectElement>("#point-size-select")!.addEventListener("change", e => {
-  pointDisplayRadius = Number((e.currentTarget as HTMLSelectElement).value);
-  redrawZoom();
-});
 document.querySelector<HTMLSelectElement>("#line-style-select")!.addEventListener("change", e => {
   showJwwLineTypes = (e.currentTarget as HTMLSelectElement).value === "original";
   redrawZoom();
@@ -932,7 +918,13 @@ function drawEntity(
   if (entity.type === "CIRCLE" && hasNumbers(entity, "center_x", "center_y", "radius")) {
     const [x, y] = toScreen(entity.center_x, entity.center_y);
     context.beginPath();
-    context.arc(x, y, Math.max(0.8, entity.radius * scale), 0, Math.PI * 2);
+    // Real CAD circles must preserve their radius.  The former
+    // 0.8px minimum artificially enlarged small circles at overall-fit.
+    // Both radius and adjacent line distances now share the exact
+    // model-to-screen scale, including canvas pinch zoom.
+    const radiusInView = Math.abs(entity.radius) * scale;
+    if (!Number.isFinite(radiusInView) || radiusInView <= 0) return;
+    context.arc(x, y, radiusInView, 0, Math.PI * 2);
     context.stroke();
     return;
   }
