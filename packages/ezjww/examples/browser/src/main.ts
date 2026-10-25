@@ -754,7 +754,7 @@ function cadPdfFile(paper: "A4" | "A3"): File {
   const jpeg = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) jpeg[i] = binary.charCodeAt(i);
   const pdf = pdfFromJpeg(jpeg, width, height, pageW, pageH);
-  return new File([pdf], filenameStem() + "_" + paper +
+  return new File([Uint8Array.from(pdf)], filenameStem() + "_" + paper +
     (isLandscape ? "横" : "縦") + "_図面.pdf", { type: "application/pdf" });
 }
 
