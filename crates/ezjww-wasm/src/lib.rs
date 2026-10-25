@@ -143,7 +143,11 @@ pub fn read_preview_dxf_document(
     // Do not change the established JWC/JWS display behavior.
     if is_jwc_file(data) || is_jws_file(data) {
         return read_dxf_document(
-            data, explode_inserts, max_block_nesting, jwc_coordinates, text_em_scale
+            data,
+            explode_inserts,
+            max_block_nesting,
+            jwc_coordinates,
+            text_em_scale,
         );
     }
     let options = convert_options(
