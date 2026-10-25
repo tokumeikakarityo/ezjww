@@ -190,7 +190,9 @@ pub fn read_edited_dxf_string(
     edits: JsValue,
 ) -> Result<String, JsValue> {
     if !is_jww_signature(data) {
-        return Err(js_error("Edited DXF export currently supports JWW files only"));
+        return Err(js_error(
+            "Edited DXF export currently supports JWW files only",
+        ));
     }
     let edits: Vec<EditedDxfText> = serde_wasm_bindgen::from_value(edits)
         .map_err(|error| js_error(&format!("Invalid text edits: {error}")))?;
