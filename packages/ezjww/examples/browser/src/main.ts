@@ -131,9 +131,13 @@ app.innerHTML = `
     <div class="cad-share-actions">
       <button id="share-original-file" type="button">原JWWを共有</button>
       <button id="share-edited-dxf" type="button" disabled>編集DXFを共有</button>
-      <button id="share-preview-image" type="button">画面画像（PNG）を共有</button>
+      <button id="share-original-zip" type="button">原CADをZIPで共有</button>
+      <button id="save-original-zip" type="button">CADのZIPを保存</button>
+      <button id="share-edited-zip" type="button" disabled>編集DXFをZIPで共有</button>
+      <button id="share-whole-image" type="button">図面全体（高画質PNG）</button>
+      <button id="share-preview-image" type="button">表示中の範囲（高画質PNG）</button>
     </div>
-    <p class="cad-share-note">元JWWは一切変更しません。「編集DXF」は文字変更済みの別ファイルです。共有できない形式はiPhoneへの保存に切り替えます。</p>
+    <p class="cad-share-note">LINEでJWW・DXFの直接共有が拒否される場合は「ZIPで共有」をお試しください。うまくいかなければ「CADのZIPを保存」→LINEのトーク内「＋」→「ファイル」で送信できます。高画質PNGはCADデータから新しく描画し、画面の画像を拡大コピーしません。元のCADデータは変更しません。</p>
     <p id="share-result" class="cad-share-result" role="status" aria-live="polite"></p>
   </section>
 
@@ -232,6 +236,10 @@ const closeSharePanelButton = document.querySelector<HTMLButtonElement>("#close-
 const shareOriginalFileButton = document.querySelector<HTMLButtonElement>("#share-original-file")!;
 const shareEditedDxfButton = document.querySelector<HTMLButtonElement>("#share-edited-dxf")!;
 const sharePreviewImageButton = document.querySelector<HTMLButtonElement>("#share-preview-image")!;
+const shareWholeImageButton = document.querySelector<HTMLButtonElement>("#share-whole-image")!;
+const shareOriginalZipButton = document.querySelector<HTMLButtonElement>("#share-original-zip")!;
+const saveOriginalZipButton = document.querySelector<HTMLButtonElement>("#save-original-zip")!;
+const shareEditedZipButton = document.querySelector<HTMLButtonElement>("#share-edited-zip")!;
 const shareResult = document.querySelector<HTMLParagraphElement>("#share-result")!;
 const textEditPanel = document.querySelector<HTMLDivElement>("#text-edit-panel")!;
 const textEditInput = document.querySelector<HTMLInputElement>("#text-edit-input")!;
@@ -475,14 +483,131 @@ function changedDxfFile(): File | null {
     { type: "application/dxf" });
 }
 
-function snapshotPngFile(): File {
-  // The currently shown CAD viewport, not the webpage or popup.
-  const base64 = canvas.toDataURL("image/png").split(",")[1];
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new File([bytes], filenameStem() + "_画面.png",
-    { type: "image/png" });
+/**
+ * Plain, standards-compliant one-file ZIP (STORE, no compression).
+ * Keeps .jww/.dxf file content byte-for-byte. No third-party service.
+ */
+function cadZip(data: Uint8Array, entryFilename: string, zipFilename: string): File {
+  const name = new TextEncoder().encode(entryFilename);
+  if (data.length > 0xffffffff || name.length > 65535) {
+    throw new Error("ZIPとして保存できるサイズを超えています");
+  }
+  const length = 30 + name.length + data.length + 46 + name.length + 22;
+  const bytes = new Uint8Array(length);
+  const dv = new DataView(bytes.buffer);
+  let crc = 0xffffffff;
+  for (const value of data) {
+    crc ^= value;
+    for (let b = 0; b < 8; b++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  crc = (crc ^ 0xffffffff) >>> 0;
+  const local = 0;
+  dv.setUint32(local, 0x04034b50, true);
+  dv.setUint16(local+4, 20, true);
+  dv.setUint16(local+6, 0x0800, true); // UTF-8 name
+  dv.setUint16(local+8, 0, true); // STORE (no lossy conversion)
+  dv.setUint32(local+14, crc, true);
+  dv.setUint32(local+18, data.length, true);
+  dv.setUint32(local+22, data.length, true);
+  dv.setUint16(local+26, name.length, true);
+  bytes.set(name, 30);
+  bytes.set(data, 30+name.length);
+  const central = 30+name.length+data.length;
+  dv.setUint32(central, 0x02014b50, true);
+  dv.setUint16(central+4, 20, true);
+  dv.setUint16(central+6, 20, true);
+  dv.setUint16(central+8, 0x0800, true);
+  dv.setUint16(central+10, 0, true);
+  dv.setUint32(central+16, crc, true);
+  dv.setUint32(central+20, data.length, true);
+  dv.setUint32(central+24, data.length, true);
+  dv.setUint16(central+28, name.length, true);
+  dv.setUint32(central+42, 0, true);
+  bytes.set(name, central+46);
+  const eocd = central+46+name.length;
+  dv.setUint32(eocd, 0x06054b50, true);
+  dv.setUint16(eocd+8, 1, true);
+  dv.setUint16(eocd+10, 1, true);
+  dv.setUint32(eocd+12, 46+name.length, true);
+  dv.setUint32(eocd+16, central, true);
+  return new File([bytes], zipFilename, { type: "application/zip" });
+}
+function originalCadZip(): File | null {
+  if (!currentInput || !parsedState) return null;
+  return cadZip(currentInput.bytes, parsedState.fileName, filenameStem()+"_原図.zip");
+}
+function editedDxfZip(): File | null {
+  if (!currentInput || !parsedState || parsedState.cad.format !== "jww") return null;
+  const changes = effectiveTextChanges();
+  if (!changes.length) return null;
+  const str = readEditedDxfString(currentInput.bytes, explodeInserts, changes);
+  const name = filenameStem()+"_文字変更.dxf";
+  return cadZip(new TextEncoder().encode(str), name, filenameStem()+"_文字変更.zip");
+}
+function imageCanvasFile(output: HTMLCanvasElement, filename: string): File {
+  const encoded = output.toDataURL("image/png");
+  if (!encoded.startsWith("data:image/png;base64,")) {
+    throw new Error("PNG出力が未対応です");
+  }
+  const decoded = atob(encoded.slice(encoded.indexOf(",")+1));
+  const bytes = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
+  return new File([bytes], filename, { type: "image/png" });
+}
+/**
+ * Re-render DXF paths at up to 3300px on their longest side (<= 10 MP).
+ * "whole" fits geometry tightly; "viewport" preserves the visible pan/zoom.
+ * Separate canvas prevents changes to the live screen and selection hits.
+ */
+function highResolutionPngFile(mode: "whole" | "viewport"): File {
+  if (!parsedState) throw new Error("図面が読み込まれていません");
+  const liveW = Math.max(1, canvas.getBoundingClientRect().width);
+  const liveH = Math.max(1, canvas.getBoundingClientRect().height);
+  let aspect = liveW / liveH;
+  if (mode === "whole") {
+    const dxf = parsedState.dxf;
+    const isJwc = !!dxf.jwc_conversion_report;
+    const hidden = new Set(isJwc ? dxf.layers.filter(l => l.frozen).map(l => l.name) : []);
+    const temp = document.createElement("canvas").getContext("2d");
+    if (!temp) throw new Error("Canvasの初期化に失敗しました");
+    const widths = new Map<DxfEntity,number>();
+    let i = 0;
+    for (const entity of dxf.entities) {
+      if (entity.type === "TEXT" && isJwc) widths.set(entity,dxf.text_width_factors?.[i++] ?? 1);
+    }
+    const bounds = dxfBounds(dxf.entities.filter(e => !hidden.has(e.layer)), temp, widths);
+    if (bounds) aspect = Math.max(0.01,(bounds.maxX-bounds.minX)/Math.max(0.01,bounds.maxY-bounds.minY));
+  }
+  const maxEdge = 3300;
+  let width = aspect >= 1 ? maxEdge : Math.round(maxEdge * aspect);
+  let height = aspect >= 1 ? Math.round(maxEdge / aspect) : maxEdge;
+  width = Math.max(1, width);
+  height = Math.max(1, height);
+  const px = width * height;
+  if (px > 10000000) {
+    const limit = Math.sqrt(10000000/px);
+    width = Math.max(1,Math.round(width*limit));
+    height = Math.max(1,Math.round(height*limit));
+  }
+  const output = document.createElement("canvas");
+  output.width = width;
+  output.height = height;
+  const ctx = output.getContext("2d");
+  if (!ctx) throw new Error("高解像度Canvasの初期化に失敗しました");
+  ctx.fillStyle = canvasBackground === "black" ? "#000000" : "#f7f8fb";
+  ctx.fillRect(0,0,width,height);
+  const factor = width / liveW;
+  drawDxf(ctx,width,height,parsedState.dxf,{
+    exportMode:true,
+    exportWhole:mode==="whole",
+    zoom:mode==="whole"?1:viewZoom,
+    panX:mode==="whole"?0:viewPanX*factor,
+    panY:mode==="whole"?0:viewPanY*factor,
+    padding:mode==="whole"?Math.max(20,Math.min(width,height)*0.035):28*factor,
+    strokePx:mode==="whole"?1.7:Math.max(2,Math.min(7,1.2*factor)),
+  });
+  return imageCanvasFile(output, filenameStem() +
+    (mode === "whole" ? "_全体高画質.png" : "_表示範囲高画質.png"));
 }
 
 function updateShareControls(): void {
@@ -490,8 +615,12 @@ function updateShareControls(): void {
   openSharePanelButton.disabled = !loaded;
   shareOriginalFileButton.disabled = !loaded;
   sharePreviewImageButton.disabled = !loaded;
+  shareWholeImageButton.disabled = !loaded;
+  shareOriginalZipButton.disabled = !loaded;
+  saveOriginalZipButton.disabled = !loaded;
   shareEditedDxfButton.disabled = !loaded ||
     parsedState?.cad.format !== "jww" || effectiveTextChanges().length === 0;
+  shareEditedZipButton.disabled = shareEditedDxfButton.disabled;
 }
 
 openSharePanelButton.addEventListener("click", () => {
@@ -518,13 +647,29 @@ shareEditedDxfButton.addEventListener("click", () => {
   }
 });
 sharePreviewImageButton.addEventListener("click", () => {
+  try { void shareOrDownload(highResolutionPngFile("viewport")); }
+  catch (error) { shareStatus("範囲画像の作成に失敗：" + String(error)); }
+});
+shareWholeImageButton.addEventListener("click", () => {
+  try { void shareOrDownload(highResolutionPngFile("whole")); }
+  catch (error) { shareStatus("全体画像の作成に失敗：" + String(error)); }
+});
+shareOriginalZipButton.addEventListener("click", () => {
+  try { const file = originalCadZip(); if (file) void shareOrDownload(file); }
+  catch (error) { shareStatus("ZIP作成に失敗：" + String(error)); }
+});
+saveOriginalZipButton.addEventListener("click", () => {
   try {
-    const file = snapshotPngFile();
-    void shareOrDownload(file);
-  } catch (error) {
-    shareStatus("画像の作成に失敗しました。" +
-      (error instanceof Error ? error.message : String(error)));
-  }
+    const file = originalCadZip();
+    if (file) {
+      saveFileLocally(file);
+      shareStatus("ZIPを保存しました。LINEの「＋」→「ファイル」から選択して送れます。");
+    }
+  } catch (error) { shareStatus("ZIP保存に失敗：" + String(error)); }
+});
+shareEditedZipButton.addEventListener("click", () => {
+  try { const file = editedDxfZip(); if (file) void shareOrDownload(file); }
+  catch (error) { shareStatus("編集DXFのZIP作成に失敗：" + String(error)); }
 });
 
 function effectiveTextChanges(): Array<OriginalText & { after: string }> {
@@ -943,9 +1088,17 @@ function drawDxf(
   width: number,
   height: number,
   dxf: DxfDocument,
+  options: {
+    exportMode?: boolean; exportWhole?: boolean; zoom?: number;
+    panX?: number; panY?: number; padding?: number; strokePx?: number;
+  } = {},
 ): void {
+  const exportMode = options.exportMode === true;
+  const renderZoom = options.zoom ?? viewZoom;
+  const renderPanX = options.panX ?? viewPanX;
+  const renderPanY = options.panY ?? viewPanY;
   const isJwc = !!dxf.jwc_conversion_report;
-  textHits = [];
+  if (!exportMode) textHits = [];
   const hidden = new Set(isJwc ? dxf.layers.filter(layer => layer.frozen).map(layer => layer.name) : []);
   const widths = new Map<DxfEntity, number>();
   let textIndex = 0;
@@ -968,7 +1121,7 @@ function drawDxf(
     return;
   }
 
-  const padding = 28;
+  const padding = options.padding ?? 28;
   const modelWidth = Math.max(1, bounds.maxX - bounds.minX);
   const modelHeight = Math.max(1, bounds.maxY - bounds.minY);
   const scale = Math.min(
@@ -984,10 +1137,10 @@ function drawDxf(
   ];
 
   // Jw_cad black canvas does not show the light-mode checking grid.
-  if (canvasBackground === "white") drawGrid(context, width, height);
+  if (!exportMode && canvasBackground === "white") drawGrid(context, width, height);
   context.save();
-  context.translate(width/2 + viewPanX, height/2 + viewPanY);
-  context.scale(viewZoom, viewZoom);
+  context.translate(width/2 + renderPanX, height/2 + renderPanY);
+  context.scale(renderZoom, renderZoom);
   context.translate(-width/2, -height/2);
   context.lineCap = "round";
   context.lineJoin = "round";
@@ -1015,22 +1168,22 @@ function drawDxf(
       : colorFor(entity.color);
     context.strokeStyle = canvasBackground === "black" ? dxfAciColor(entity.color) : originalWhiteColor;
     context.fillStyle = context.strokeStyle;
-    context.lineWidth = 1.2 / viewZoom;
+    context.lineWidth = (options.strokePx ?? 1.2) / renderZoom;
     if (entity.type === "LINE" || entity.type === "ARC" ||
         entity.type === "CIRCLE" || entity.type === "ELLIPSE") {
       const lineStyle = findLineStyle(entity, definedLineTypes, layersByName);
       if (lineStyle.pattern && lineStyle.pattern.length >= 2) patternedCount += 1;
       if (lineStyle.unresolved) unknownCount += 1;
       context.setLineDash(showJwwLineTypes && lineStyle.pattern
-        ? previewDashPattern(lineStyle.pattern, scale, viewZoom) : []);
+        ? previewDashPattern(lineStyle.pattern, scale, renderZoom) : []);
     } else {
       // Solids, points and labels must not inherit the previous line's dash.
       context.setLineDash([]);
     }
-    drawEntity(context, entity, toScreen, scale, widths.get(entity));
+    drawEntity(context, entity, toScreen, scale, widths.get(entity), renderZoom);
     // Text glyphs now render after all lines/circles/points, so they appear
     // in front. Preserve the original array index for text selection.
-    if (entity.type === "TEXT" && hasNumbers(entity, "x", "y") && entity.content) {
+    if (!exportMode && entity.type === "TEXT" && hasNumbers(entity, "x", "y") && entity.content) {
       const [baseX,baseY] = toScreen(entity.x,entity.y);
       const fontHeight = Math.max(0.1,(entity.height ?? 2.5)*scale);
       const widthFactor = textWidthFactorFor(entity,widths.get(entity));
@@ -1041,22 +1194,24 @@ function drawDxf(
       const centerX=width/2,centerY=height/2;
       textHits.push({
         index:visibleIndices[index],content:entity.content,layer:entity.layer,
-        x:centerX+viewPanX+(baseX-centerX)*viewZoom,
-        y:centerY+viewPanY+(baseY-centerY)*viewZoom,
-        width:Math.max(0.5,measuredWidth*viewZoom),
-        height:Math.max(0.5,fontHeight*viewZoom),
+        x:centerX+renderPanX+(baseX-centerX)*renderZoom,
+        y:centerY+renderPanY+(baseY-centerY)*renderZoom,
+        width:Math.max(0.5,measuredWidth*renderZoom),
+        height:Math.max(0.5,fontHeight*renderZoom),
         angle:-degToRad(entity.rotation ?? 0),
       });
     }
   }
   context.restore();
-  document.querySelector<HTMLDivElement>("#line-style-status")!.textContent =
-    "V013：補助線色・補助線種を除外 / 線種：" + (showJwwLineTypes ? "原図表示" : "すべて実線") +
-    " / 破線・鎖線等 " + patternedCount.toLocaleString("ja-JP") + "要素" +
-    " / 線種定義 " + dxf.line_types.length + "種類" +
-    (unknownCount ? " / 未解決 " + unknownCount + "要素" : "");
-  drawSelectedTextHighlight(context);
-  updateTextSelectionStatus();
+  if (!exportMode) {
+    document.querySelector<HTMLDivElement>("#line-style-status")!.textContent =
+      "V013：補助線色・補助線種を除外 / 線種：" + (showJwwLineTypes ? "原図表示" : "すべて実線") +
+      " / 破線・鎖線等 " + patternedCount.toLocaleString("ja-JP") + "要素" +
+      " / 線種定義 " + dxf.line_types.length + "種類" +
+      (unknownCount ? " / 未解決 " + unknownCount + "要素" : "");
+    drawSelectedTextHighlight(context);
+    updateTextSelectionStatus();
+  }
 }
 
 
@@ -1118,6 +1273,7 @@ function drawEntity(
   toScreen: (x: number, y: number) => [number, number],
   scale: number,
   textWidthFactor?: number,
+  renderZoom = viewZoom,
 ): void {
   if (entity.type === "LINE" && hasNumbers(entity, "x1", "y1", "x2", "y2")) {
     const [x1, y1] = toScreen(entity.x1, entity.y1);
@@ -1179,7 +1335,7 @@ function drawEntity(
     // adjoining polygons; unlike the old differently tinted boundary line,
     // it cannot create a visible border on a same-color contiguous surface.
     context.strokeStyle = context.fillStyle;
-    context.lineWidth = 0.7 / viewZoom;
+    context.lineWidth = 0.7 / renderZoom;
     context.setLineDash([]);
     context.stroke();
     context.restore();
@@ -1193,8 +1349,8 @@ function drawEntity(
     // Use zoom-aware inverse radius, allowing modest growth but capping
     // visual size so dimension markers do not obscure nearby annotations.
     const screenRadius = Math.min(3.2,
-      Math.max(0.55, pointDisplayRadius * Math.sqrt(viewZoom)));
-    context.arc(x, y, screenRadius / viewZoom, 0, Math.PI * 2);
+      Math.max(0.55, pointDisplayRadius * Math.sqrt(renderZoom)));
+    context.arc(x, y, screenRadius / renderZoom, 0, Math.PI * 2);
     context.fill();
     return;
   }
