@@ -52,6 +52,7 @@ dependencies = [
 name = "ezjww-wasm"
 version = "0.7.5"
 dependencies = [
+ "encoding_rs",
  "ezjww-core",
  "js-sys",
  "serde",

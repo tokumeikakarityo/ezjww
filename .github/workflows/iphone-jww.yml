@@ -7,6 +7,8 @@ on:
       - '.github/workflows/iphone-jww.yml'
       - 'packages/ezjww/examples/browser/src/main.ts'
       - 'crates/ezjww-wasm/src/lib.rs'
+      - 'crates/ezjww-wasm/Cargo.toml'
+      - 'Cargo.lock'
       - 'packages/ezjww/examples/browser/src/styles.css'
       - 'packages/ezjww/examples/browser/index.html'
       - 'packages/ezjww/examples/browser/public/**'
