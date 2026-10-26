@@ -5,6 +5,7 @@ import initWasm, {
   readDxfString,
   newJwwDocument,
   toJwwBytes,
+  encodeCp932String,
 } from "./wasm/ezjww_wasm.js";
 import type {
   DxfDocument,
@@ -105,7 +106,7 @@ let nativeTextTotal = 0;
 app.innerHTML = `
   <header class="topbar">
     <div>
-      <div class="eyebrow">ezjww · V035</div>
+      <div class="eyebrow">ezjww · V036</div>
       <h1>JWW簡易CAD</h1>
     </div>
     <div class="actions">
@@ -117,7 +118,7 @@ app.innerHTML = `
         <select id="coordinate-select"><option value="paper_millimeters">紙上mm</option><option value="model_millimeters">実寸mm</option></select>
       </label>
       <button id="save-jww" class="tool-button" type="button" disabled>JWW保存</button>
-      <button id="open-share-panel" class="tool-button" type="button" disabled>PDF保存(共有等)</button>
+      <button id="open-share-panel" class="tool-button" type="button" disabled>PDF保存・共有</button>
       <button id="sample-button" class="tool-button" type="button" hidden>サンプル読込</button>
       <button id="create-button" class="tool-button" type="button" hidden>JWW作成例</button>
       <button id="download-jww-button" class="tool-button" type="button" disabled hidden>生成JWW保存</button>
@@ -152,7 +153,7 @@ app.innerHTML = `
         <span id="pdf-range-status" role="status" aria-live="polite" hidden></span>
       </div>
       <div class="cad-share-actions">
-        <button id="share-pdf" type="button">PDFを保存・共有</button>
+        <button id="share-pdf" type="button">PDF保存・共有</button>
       </div>
     </div>
     <p id="share-result" class="cad-share-result" role="status" aria-live="polite" hidden></p>
@@ -604,6 +605,21 @@ function mfcUnicodeString(value:string):Uint8Array {
   for(let i=0;i<units;i++)dv.setUint16(head+2*i,value.charCodeAt(i),true);
   return out;
 }
+/** V036: retain the original ANSI CString encoding for Jw_cad 7.11. */
+function mfcAnsiString(encoded:Uint8Array):Uint8Array {
+  const count=encoded.length;
+  const head=count<255?1:count<65535?3:7;
+  const out=new Uint8Array(head+count);
+  if(count<255)out[0]=count;
+  else {
+    out[0]=255;
+    const view=new DataView(out.buffer);
+    if(count<65535)view.setUint16(1,count,true);
+    else {view.setUint16(1,65535,true);view.setUint32(3,count,true);}
+  }
+  out.set(encoded,head);
+  return out;
+}
 interface JwwTextPatch { start:number;end:number; replacement:Uint8Array; index:number }
 function editedJwwBytes(): Uint8Array {
   if(!currentInput || !parsedState || parsedState.cad.format!=="jww") {
@@ -676,13 +692,17 @@ function editedJwwBytes(): Uint8Array {
       const content=mfcStringAt(raw,font.end,sourceEncoding==="utf-8"?"utf-8":"shift_jis");
       if(!content || content.content!==change.before)continue;
       contentCount++;
-      // V035: source JWW text may be CP932 (ANSI CString) even when its
-      // version is 700. V029 wrongly rejected ALL such strings.
-      // Replacing with a Unicode CString is valid for version-700 archives.
-      // The complete parsed drawing is verified before any file is offered.
+      // V036: preserve the original TEXT encoding. Version 700 alone does
+      // not imply Unicode TEXT: Jw_cad 7.11 uses CP932 ANSI strings.
+      // Unrepresentable CP932 characters must fail rather than corrupt.
       if(content.unicode) unicodeMatched=true;
       else ansiMatched=true;
-      found={start:font.end,end:content.end,replacement:mfcUnicodeString(change.after),index:indexes[0]};
+      const replacement=content.unicode
+        ? mfcUnicodeString(change.after)
+        : mfcAnsiString(sourceEncoding==="utf-8"
+          ? new TextEncoder().encode(change.after)
+          : encodeCp932String(change.after));
+      found={start:font.end,end:content.end,replacement,index:indexes[0]};
       count++;
       if(count>1)break;
     }
