@@ -643,10 +643,14 @@ function editedJwwBytes(): Uint8Array {
   }
   // Preserve the DXF exporter contract: its changes have no index field.
   // The native JWW writer alone uses the index from the originalText Map.
-  const changes=Array.from(originalText,([index,original])=>{
-    const entity=parsedState!.dxf.entities[index];
-    return {index,...original,after:entity?.type==="TEXT" ? entity.content : original.before};
-  }).filter(c=>typeof c.after==="string" && c.after!==c.before);
+  const changes:Array<OriginalText & {index:number;after:string}>=[];
+  for(const [index,original] of originalText){
+    const entity=parsedState.dxf.entities[index];
+    if(entity?.type==="TEXT" && typeof entity.content==="string" &&
+       entity.content!==original.before){
+      changes.push({index,...original,after:entity.content});
+    }
+  }
   if(changes.length===0) {
     return Uint8Array.from(currentInput.bytes);
   }
