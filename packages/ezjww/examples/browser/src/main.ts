@@ -94,6 +94,9 @@ interface NativeJwwText {
 }
 type PdfRangeMode = "whole" | "viewport" | "rectangle";
 let pdfRangeMode: PdfRangeMode = "whole";
+// Selecting 2 points is a transient input state; PDF output mode and text
+// selection must NOT be tied together after the rectangle is complete.
+let pdfRangePicking = false;
 let pdfRangeStart: {x:number;y:number} | null = null;
 let pdfRangeBounds: Bounds | null = null;
 const nativeTextByDxfIndex = new Map<number, NativeJwwText>();
@@ -163,6 +166,7 @@ app.innerHTML = `
       </label>
       <div class="cad-pdf-range-actions">
         <button id="pdf-range-reselect" type="button">範囲を選び直す</button>
+        <button id="pdf-range-clear" type="button">範囲クリア・文字編集へ</button>
         <span id="pdf-range-status" role="status" aria-live="polite">図面全体を出力します。</span>
       </div>
       <span class="cad-pdf-hint">現在の画面＝拡大・移動後の表示範囲／範囲指定＝図面上の2点をタップ。元の図面データは削除しません。白背景・用紙へ収める出力（縮尺指定なし）。</span>
@@ -218,6 +222,7 @@ app.innerHTML = `
       <div id="drawing-stage" class="drawing-stage">
         <canvas id="preview-canvas" class="preview" width="1200" height="760"></canvas>
         <div id="pdf-range-indicator" class="pdf-range-indicator" hidden>PDF範囲：図面上の1点目をタップ</div>
+        <button id="pdf-range-exit" class="pdf-range-exit" type="button" hidden>✕ 範囲クリア・文字編集へ</button>
         <div id="text-edit-panel" class="text-edit-panel" hidden>
           <div class="editor-heading"><label for="text-edit-input">文字編集</label><button id="text-edit-close" type="button" aria-label="編集を閉じる">×</button></div>
           <div id="text-selection-status" class="text-selection-status" role="status" aria-live="polite">
@@ -304,6 +309,8 @@ const saveWhole2xButton = document.querySelector<HTMLButtonElement>("#save-whole
 const pdfPaperSelect = document.querySelector<HTMLSelectElement>("#pdf-paper-select")!;
 const pdfRangeSelect = document.querySelector<HTMLSelectElement>("#pdf-range-select")!;
 const pdfRangeReselect = document.querySelector<HTMLButtonElement>("#pdf-range-reselect")!;
+const pdfRangeClear = document.querySelector<HTMLButtonElement>("#pdf-range-clear")!;
+const pdfRangeExit = document.querySelector<HTMLButtonElement>("#pdf-range-exit")!;
 const pdfRangeStatus = document.querySelector<HTMLSpanElement>("#pdf-range-status")!;
 const pdfRangeIndicator = document.querySelector<HTMLDivElement>("#pdf-range-indicator")!;
 const sharePdfButton = document.querySelector<HTMLButtonElement>("#share-pdf")!;
@@ -407,7 +414,7 @@ function endGesture(e:PointerEvent):void {
   if(tapCandidate?.id===e.pointerId)tapCandidate=null;
   startGesture();
   if (shouldPick) {
-    if (pdfRangeMode === "rectangle") handlePdfRangeTap(point);
+    if (pdfRangeMode === "rectangle" && pdfRangePicking) handlePdfRangeTap(point);
     else selectTextAt(point);
   }
 }
@@ -965,27 +972,49 @@ function viewBoundsInCad(): Bounds | null {
     maxX:Math.max(p1.x,p2.x),maxY:Math.max(p1.y,p2.y)};
 }
 function resetPdfRangeOnNewDrawing(): void {
+  // A reopened drawing must always accept ordinary text taps.
+  pdfRangeMode="whole";
+  pdfRangePicking=false;
   pdfRangeStart=null;
   pdfRangeBounds=null;
+  pdfRangeSelect.value="whole";
   updatePdfRangeUi();
+}
+/** Leave the print-range tool without changing any CAD, text or undo data. */
+function clearPdfRangeAndReturnToEditing(): void {
+  pdfRangeMode="whole";
+  pdfRangePicking=false;
+  pdfRangeStart=null;
+  pdfRangeBounds=null;
+  pdfRangeSelect.value="whole";
+  updatePdfRangeUi();
+  redrawZoom();
+  queueWorkingSave();
+  shareStatus("PDFの印刷範囲を解除しました。図面をタップして文字編集できます。");
 }
 function updatePdfRangeUi(): void {
   const selecting = pdfRangeMode==="rectangle";
+  const picking = selecting && pdfRangePicking;
   pdfRangeReselect.disabled=!parsedState;
-  pdfRangeIndicator.hidden=!selecting || !parsedState;
+  pdfRangeClear.disabled=!parsedState || !selecting;
+  pdfRangeExit.hidden=!selecting || !parsedState;
+  pdfRangeIndicator.hidden=!picking || !parsedState;
   if (selecting) {
-    const label=pdfRangeBounds ? "選択済み。別の位置をタップすると再選択します。"
-      : pdfRangeStart ? "2点目（対角）をタップしてください"
+    const label=pdfRangeBounds && !picking
+      ? "範囲選択済み。PDFに出力できます。文字も通常どおりタップして編集できます。"
+      : pdfRangeStart
+        ? "2点目（対角）をタップしてください"
         : "1点目をタップしてください";
     pdfRangeIndicator.textContent="PDF範囲指定：" + label;
-    pdfRangeStatus.textContent=label+" 図面は削除されません。";
+    pdfRangeStatus.textContent=label+" 図面のデータは削除されません。";
   } else if (pdfRangeMode==="viewport") {
-    pdfRangeStatus.textContent="PDF保存・共有を押した時点で、表示中の画面範囲を出力します。";
+    pdfRangeStatus.textContent="PDF保存・共有を押した時点で、表示中の画面範囲を出力します。文字編集も可能です。";
   } else {
-    pdfRangeStatus.textContent="従来どおり図面全体をPDFにします。";
+    pdfRangeStatus.textContent="図面全体をPDFにします。文字編集できます。";
   }
 }
 function handlePdfRangeTap(point: {x:number;y:number}): void {
+  if (!pdfRangePicking || pdfRangeMode!=="rectangle") return;
   const cad=viewportPointToCad(point);
   if (!cad) return;
   if (!pdfRangeStart || pdfRangeBounds) {
@@ -1003,6 +1032,9 @@ function handlePdfRangeTap(point: {x:number;y:number}): void {
       minX:Math.min(a.x,cad.x),maxX:Math.max(a.x,cad.x),
       minY:Math.min(a.y,cad.y),maxY:Math.max(a.y,cad.y),
     };
+    // From this point tapping text selects text, NOT a new rectangle.
+    // The completed rectangle remains available to the PDF exporter.
+    pdfRangePicking=false;
   }
   updatePdfRangeUi();
   redrawZoom();
@@ -1043,6 +1075,9 @@ pdfRangeSelect.addEventListener("change", () => {
   const next = pdfRangeSelect.value;
   pdfRangeMode = next === "viewport" ? "viewport"
     : next === "rectangle" ? "rectangle" : "whole";
+  pdfRangePicking = pdfRangeMode === "rectangle";
+  pdfRangeStart = null;
+  pdfRangeBounds = null;
   updatePdfRangeUi();
   redrawZoom();
   scheduleWorkingSave(350);
@@ -1056,6 +1091,7 @@ pdfRangeReselect.addEventListener("click", () => {
   pdfRangeStart = null;
   pdfRangeBounds = null;
   pdfRangeMode = "rectangle";
+  pdfRangePicking = true;
   pdfRangeSelect.value = "rectangle";
   updatePdfRangeUi();
   redrawZoom();
@@ -1064,6 +1100,8 @@ pdfRangeReselect.addEventListener("click", () => {
     block: "center", behavior: "smooth",
   });
 });
+pdfRangeClear.addEventListener("click", clearPdfRangeAndReturnToEditing);
+pdfRangeExit.addEventListener("click", clearPdfRangeAndReturnToEditing);
 sharePdfButton.addEventListener("click", () => {
   try {
     const file = cadPdfFile(selectedPdfPaper(), pdfRangeMode);
@@ -1337,10 +1375,13 @@ async function restoreWorkingSessionOnStartup():Promise<void> {
     document.querySelector<HTMLSelectElement>("#canvas-background-select")!.value=canvasBackground;
     document.querySelector<HTMLSelectElement>("#line-style-select")!.value=
       showJwwLineTypes?"original":"solid";
-    pdfRangeMode=["whole","viewport","rectangle"].includes(snapshot.pdfRangeMode)
-      ?snapshot.pdfRangeMode:"whole";
-    pdfRangeStart=snapshot.pdfRangeStart;
-    pdfRangeBounds=snapshot.pdfRangeBounds;
+    // Print cropping is a temporary tool. Do not restore its touch-capture
+    // mode from V025/V026 drafts: previously it made text impossible to pick.
+    // Keep the original drawing, edited text, viewport and undo history.
+    pdfRangeMode=snapshot.pdfRangeMode==="viewport"?"viewport":"whole";
+    pdfRangePicking=false;
+    pdfRangeStart=null;
+    pdfRangeBounds=null;
     pdfRangeSelect.value=pdfRangeMode;
     pdfPaperSelect.value=snapshot.pdfPaper==="A3"?"A3":"A4";
     selectedTextIndex=typeof snapshot.selectedTextIndex==="number" &&
