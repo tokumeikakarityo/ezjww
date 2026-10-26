@@ -1102,3 +1102,17 @@ h1 {
     grid-template-rows: auto 54dvh;
   }
 }
+
+/* V032: PDF-only share dialog; remove the legacy PNG/JWW/ZIP/action spacing. */
+.cad-pdf-settings {
+  margin-top: 10px;
+  padding: 8px 0 0;
+  border: none;
+}
+.cad-pdf-settings .cad-share-actions {
+  margin-top: 9px;
+}
+.cad-pdf-range-actions [hidden],
+.cad-share-result[hidden] {
+  display: none !important;
+}

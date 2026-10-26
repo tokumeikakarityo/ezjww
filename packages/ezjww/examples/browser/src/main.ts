@@ -106,7 +106,7 @@ let nativeTextTotal = 0;
 app.innerHTML = `
   <header class="topbar">
     <div>
-      <div class="eyebrow">ezjww · V031</div>
+      <div class="eyebrow">ezjww · V032</div>
       <h1>JWW簡易CAD</h1>
     </div>
     <div class="actions">
@@ -130,28 +130,12 @@ app.innerHTML = `
       </label>
     </div>
   </header>
-  <section id="share-panel" class="cad-share-panel" hidden aria-label="ファイル共有">
+  <section id="share-panel" class="cad-share-panel" hidden aria-label="PDF保存・共有">
     <div class="cad-share-head">
-      <strong>図面を共有</strong>
-      <button id="close-share-panel" type="button" aria-label="共有画面を閉じる">×</button>
-    </div>
-    <div class="cad-share-actions">
-      <button id="share-original-file" type="button">元JWWを共有</button>
-      <button id="share-edited-jww" type="button" disabled>文字変更JWWを共有</button>
-      <button id="share-edited-jww-zip" type="button" disabled>文字変更JWWをZIP共有</button>
-      <button id="share-edited-dxf" type="button" disabled hidden style="display:none">編集DXFを共有</button>
-      <button id="share-original-zip" type="button">元JWWをZIPで共有</button>
-      <button id="save-original-zip" type="button">元JWWをZIP保存</button>
-      <button id="share-edited-zip" type="button" disabled hidden style="display:none">編集DXFをZIPで共有</button>
-      <button id="share-whole-image" type="button">図面全体（高画質PNG）</button>
-      <button id="share-preview-image" type="button">表示中の範囲（高画質PNG）</button>
-      <button id="save-whole-image" type="button">全体PNGを保存</button>
-      <button id="save-preview-image" type="button">範囲PNGを保存</button>
-      <button id="share-whole-image-2x" type="button">全体PNG・2倍を共有</button>
-      <button id="save-whole-image-2x" type="button">全体PNG・2倍を保存</button>
+      <strong>PDF保存・共有</strong>
+      <button id="close-share-panel" type="button" aria-label="PDF設定を閉じる">×</button>
     </div>
     <div class="cad-pdf-settings">
-      <strong>PDF（用紙に合わせて出力）</strong>
       <label for="pdf-paper-select">用紙
         <select id="pdf-paper-select">
           <option value="A4" selected>A4</option>
@@ -166,22 +150,16 @@ app.innerHTML = `
         </select>
       </label>
       <div class="cad-pdf-range-actions">
-        <button id="pdf-range-reselect" type="button">範囲指定を開始・選び直す</button>
-        <button id="pdf-range-clear" type="button">範囲クリア・文字編集へ</button>
-        <span id="pdf-range-status" role="status" aria-live="polite">PDF範囲指定を開始するまでは通常の文字編集ができます。</span>
+        <button id="pdf-range-reselect" type="button">範囲を指定・選び直す</button>
+        <button id="pdf-range-clear" type="button">範囲をクリア</button>
+        <span id="pdf-range-status" role="status" aria-live="polite" hidden></span>
       </div>
-      <span class="cad-pdf-hint">現在の画面＝拡大・移動後の表示範囲／範囲指定＝図面上の2点をタップ。元の図面データは削除しません。白背景・用紙へ収める出力（縮尺指定なし）。</span>
       <div class="cad-share-actions">
-        <button id="share-pdf" type="button">PDFを共有</button>
         <button id="save-pdf" type="button">PDFを保存</button>
+        <button id="share-pdf" type="button">PDFを共有</button>
       </div>
     </div>
-    <div class="cad-session-tools">
-      <button id="save-work-session" type="button">現在の作業をiPhone内に一時保存</button>
-      <span>図面と文字変更履歴を自動記憶します。ブラウザのデータ消去では失われます。</span>
-    </div>
-    <p class="cad-share-note">JWW保存は元図を別名保存します。文字変更JWWは元文字・座標・属性と一致する箇所だけをバイナリ更新し、再読込で図形・属性の一致を確認できた場合のみ出力します。未対応の図面では保存を拒否します。Jw_cad 7.11での確認は必要です。LINEで直接JWWが送れない場合はZIPをご利用ください。PDFの印刷縮尺は保証しません。</p>
-    <p id="share-result" class="cad-share-result" role="status" aria-live="polite"></p>
+    <p id="share-result" class="cad-share-result" role="status" aria-live="polite" hidden></p>
   </section>
 
   <main class="shell">
@@ -280,7 +258,6 @@ app.innerHTML = `
 
 const fileInput = document.querySelector<HTMLInputElement>("#file-input")!;
 const sessionStatusElement = document.querySelector<HTMLDivElement>("#session-status")!;
-const saveWorkSessionButton = document.querySelector<HTMLButtonElement>("#save-work-session")!;
 const leaveConfirmModal = document.querySelector<HTMLDivElement>("#leave-confirm")!;
 const leaveConfirmStatus = document.querySelector<HTMLParagraphElement>("#leave-confirm-status")!;
 const leaveConfirmTitle = document.querySelector<HTMLHeadingElement>("#leave-confirm-title")!;
@@ -301,19 +278,6 @@ const downloadJwwButton = document.querySelector<HTMLButtonElement>("#download-j
 const openSharePanelButton = document.querySelector<HTMLButtonElement>("#open-share-panel")!;
 const sharePanel = document.querySelector<HTMLElement>("#share-panel")!;
 const closeSharePanelButton = document.querySelector<HTMLButtonElement>("#close-share-panel")!;
-const shareOriginalFileButton = document.querySelector<HTMLButtonElement>("#share-original-file")!;
-const shareEditedDxfButton = document.querySelector<HTMLButtonElement>("#share-edited-dxf")!;
-const shareEditedJwwButton = document.querySelector<HTMLButtonElement>("#share-edited-jww")!;
-const shareEditedJwwZipButton = document.querySelector<HTMLButtonElement>("#share-edited-jww-zip")!;
-const sharePreviewImageButton = document.querySelector<HTMLButtonElement>("#share-preview-image")!;
-const shareWholeImageButton = document.querySelector<HTMLButtonElement>("#share-whole-image")!;
-const saveWholeImageButton = document.querySelector<HTMLButtonElement>("#save-whole-image")!;
-const savePreviewImageButton = document.querySelector<HTMLButtonElement>("#save-preview-image")!;
-const shareOriginalZipButton = document.querySelector<HTMLButtonElement>("#share-original-zip")!;
-const saveOriginalZipButton = document.querySelector<HTMLButtonElement>("#save-original-zip")!;
-const shareEditedZipButton = document.querySelector<HTMLButtonElement>("#share-edited-zip")!;
-const shareWhole2xButton = document.querySelector<HTMLButtonElement>("#share-whole-image-2x")!;
-const saveWhole2xButton = document.querySelector<HTMLButtonElement>("#save-whole-image-2x")!;
 const pdfPaperSelect = document.querySelector<HTMLSelectElement>("#pdf-paper-select")!;
 const pdfRangeSelect = document.querySelector<HTMLSelectElement>("#pdf-range-select")!;
 const pdfRangeReselect = document.querySelector<HTMLButtonElement>("#pdf-range-reselect")!;
@@ -527,8 +491,17 @@ function filenameStem(): string {
   return (parsedState?.fileName ?? "drawing").replace(/\.[^.]*$/, "");
 }
 
-function shareStatus(text: string): void {
-  shareResult.textContent = text;
+let shareStatusTimer: ReturnType<typeof setTimeout> | null = null;
+function shareStatus(message: string): void {
+  if (shareStatusTimer !== null) clearTimeout(shareStatusTimer);
+  shareResult.textContent = message;
+  shareResult.hidden = !message;
+  if (message) {
+    shareStatusTimer = setTimeout(() => {
+      shareResult.hidden = true;
+      shareStatusTimer = null;
+    }, 6500);
+  }
 }
 
 async function shareOrDownload(file: File): Promise<void> {
@@ -556,12 +529,6 @@ async function shareOrDownload(file: File): Promise<void> {
     saveFileLocally(file);
     shareStatus("直接共有できなかったためダウンロードしました。「ファイル」アプリから共有できます。（" + reason + "）");
   }
-}
-
-function originalCadFile(): File | null {
-  if (!parsedState || !currentInput) return null;
-  return new File([Uint8Array.from(currentInput.bytes)],
-    parsedState.fileName, { type: "application/octet-stream" });
 }
 
 /**
@@ -749,12 +716,6 @@ function editedJwwFile():File {
     filenameStem()+(effectiveTextChanges().length?"_文字変更.jww":"_原図.jww"),
     {type:"application/octet-stream"});
 }
-function originalJwwBackup():File {
-  if(!currentInput || !parsedState || parsedState.cad.format!=="jww")
-    throw new Error("JWW図面を読み込んでください。");
-  return new File([Uint8Array.from(currentInput.bytes)],
-    filenameStem()+"_原図.jww",{type:"application/octet-stream"});
-}
 function jwwSaveError(error:unknown):void {
   const message=error instanceof Error?error.message:String(error);
   alert("JWW保存を安全に完了できません。元JWWは変更されていません。\n\n"+message);
@@ -769,164 +730,6 @@ saveJwwButton.addEventListener("click",()=>{
     }
   }catch(error){jwwSaveError(error);}
 });
-shareEditedJwwButton.addEventListener("click",()=>{
-  try {
-    if(!effectiveTextChanges().length)return;
-    void shareOrDownload(editedJwwFile());
-  }catch(error){jwwSaveError(error);}
-});
-shareEditedJwwZipButton.addEventListener("click",()=>{
-  try {
-    if(!effectiveTextChanges().length)return;
-    const verifiedBytes=editedJwwBytes();
-    const result=cadZip(verifiedBytes,filenameStem()+"_文字変更.jww",
-      filenameStem()+"_文字変更JWW.zip");
-    void shareOrDownload(result);
-  }catch(error){jwwSaveError(error);}
-});
-
-function changedDxfFile(): File | null {
-  if (!parsedState || !currentInput || parsedState.cad.format !== "jww") return null;
-  const changes = effectiveTextChanges();
-  if (!changes.length) return null;
-  // Uses the same previously tested exact-match exporter as the V015 button.
-  const content = readEditedDxfString(currentInput.bytes, explodeInserts, changes);
-  return new File([content], filenameStem() + "_文字変更.dxf",
-    { type: "application/dxf" });
-}
-
-/**
- * Plain, standards-compliant one-file ZIP (STORE, no compression).
- * Keeps .jww/.dxf file content byte-for-byte. No third-party service.
- */
-function cadZip(data: Uint8Array, entryFilename: string, zipFilename: string): File {
-  const name = new TextEncoder().encode(entryFilename);
-  if (data.length > 0xffffffff || name.length > 65535) {
-    throw new Error("ZIPとして保存できるサイズを超えています");
-  }
-  const length = 30 + name.length + data.length + 46 + name.length + 22;
-  const bytes = new Uint8Array(length);
-  const dv = new DataView(bytes.buffer);
-  let crc = 0xffffffff;
-  for (const value of data) {
-    crc ^= value;
-    for (let b = 0; b < 8; b++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
-  }
-  crc = (crc ^ 0xffffffff) >>> 0;
-  const local = 0;
-  dv.setUint32(local, 0x04034b50, true);
-  dv.setUint16(local+4, 20, true);
-  dv.setUint16(local+6, 0x0800, true); // UTF-8 name
-  dv.setUint16(local+8, 0, true); // STORE (no lossy conversion)
-  dv.setUint32(local+14, crc, true);
-  dv.setUint32(local+18, data.length, true);
-  dv.setUint32(local+22, data.length, true);
-  dv.setUint16(local+26, name.length, true);
-  bytes.set(name, 30);
-  bytes.set(data, 30+name.length);
-  const central = 30+name.length+data.length;
-  dv.setUint32(central, 0x02014b50, true);
-  dv.setUint16(central+4, 20, true);
-  dv.setUint16(central+6, 20, true);
-  dv.setUint16(central+8, 0x0800, true);
-  dv.setUint16(central+10, 0, true);
-  dv.setUint32(central+16, crc, true);
-  dv.setUint32(central+20, data.length, true);
-  dv.setUint32(central+24, data.length, true);
-  dv.setUint16(central+28, name.length, true);
-  dv.setUint32(central+42, 0, true);
-  bytes.set(name, central+46);
-  const eocd = central+46+name.length;
-  dv.setUint32(eocd, 0x06054b50, true);
-  dv.setUint16(eocd+8, 1, true);
-  dv.setUint16(eocd+10, 1, true);
-  dv.setUint32(eocd+12, 46+name.length, true);
-  dv.setUint32(eocd+16, central, true);
-  return new File([bytes], zipFilename, { type: "application/zip" });
-}
-function originalCadZip(): File | null {
-  if (!currentInput || !parsedState) return null;
-  return cadZip(currentInput.bytes, parsedState.fileName, filenameStem()+"_原図.zip");
-}
-function editedDxfZip(): File | null {
-  if (!currentInput || !parsedState || parsedState.cad.format !== "jww") return null;
-  const changes = effectiveTextChanges();
-  if (!changes.length) return null;
-  const str = readEditedDxfString(currentInput.bytes, explodeInserts, changes);
-  const name = filenameStem()+"_文字変更.dxf";
-  return cadZip(new TextEncoder().encode(str), name, filenameStem()+"_文字変更.zip");
-}
-function imageCanvasFile(output: HTMLCanvasElement, filename: string): File {
-  const encoded = output.toDataURL("image/png");
-  if (!encoded.startsWith("data:image/png;base64,")) {
-    throw new Error("PNG出力が未対応です");
-  }
-  const decoded = atob(encoded.slice(encoded.indexOf(",")+1));
-  const bytes = new Uint8Array(decoded.length);
-  for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
-  return new File([bytes], filename, { type: "image/png" });
-}
-/**
- * Re-render DXF paths at up to 3300px on their longest side (<= 10 MP).
- * "whole" fits geometry tightly; "viewport" preserves the visible pan/zoom.
- * Separate canvas prevents changes to the live screen and selection hits.
- */
-function highResolutionPngFile(mode: "whole" | "viewport", density: 1 | 2 = 1): File {
-  if (!parsedState) throw new Error("図面が読み込まれていません");
-  const liveW = Math.max(1, canvas.getBoundingClientRect().width);
-  const liveH = Math.max(1, canvas.getBoundingClientRect().height);
-  let aspect = liveW / liveH;
-  if (mode === "whole") {
-    const dxf = parsedState.dxf;
-    const isJwc = !!dxf.jwc_conversion_report;
-    const hidden = new Set(isJwc ? dxf.layers.filter(l => l.frozen).map(l => l.name) : []);
-    const temp = document.createElement("canvas").getContext("2d");
-    if (!temp) throw new Error("Canvasの初期化に失敗しました");
-    const widths = new Map<DxfEntity,number>();
-    let i = 0;
-    for (const entity of dxf.entities) {
-      if (entity.type === "TEXT" && isJwc) widths.set(entity,dxf.text_width_factors?.[i++] ?? 1);
-    }
-    const bounds = dxfBounds(dxf.entities.filter(e => !hidden.has(e.layer)), temp, widths);
-    if (bounds) aspect = Math.max(0.01,(bounds.maxX-bounds.minX)/Math.max(0.01,bounds.maxY-bounds.minY));
-  }
-  const maxEdge = 3300 * (mode === "whole" ? density : 1);
-  let width = aspect >= 1 ? maxEdge : Math.round(maxEdge * aspect);
-  let height = aspect >= 1 ? Math.round(maxEdge / aspect) : maxEdge;
-  width = Math.max(1, width);
-  height = Math.max(1, height);
-  const px = width * height;
-  const pixelLimit = mode === "whole" && density === 2 ? 40000000 : 10000000;
-  if (px > pixelLimit) {
-    const limit = Math.sqrt(pixelLimit/px);
-    width = Math.max(1,Math.round(width*limit));
-    height = Math.max(1,Math.round(height*limit));
-  }
-  const output = document.createElement("canvas");
-  output.width = width;
-  output.height = height;
-  const ctx = output.getContext("2d");
-  if (!ctx) throw new Error("高解像度Canvasの初期化に失敗しました");
-  ctx.fillStyle = canvasBackground === "black" ? "#000000" : "#f7f8fb";
-  ctx.fillRect(0,0,width,height);
-  const factor = width / liveW;
-  drawDxf(ctx,width,height,parsedState.dxf,{
-    exportMode:true,
-    exportWhole:mode==="whole",
-    zoom:mode==="whole"?1:viewZoom,
-    panX:mode==="whole"?0:viewPanX*factor,
-    panY:mode==="whole"?0:viewPanY*factor,
-    padding:mode==="whole"?Math.max(20,Math.min(width,height)*0.035):28*factor,
-    strokePx:mode==="whole"?1.7:Math.max(2,Math.min(7,1.2*factor)),
-  });
-  return imageCanvasFile(output, filenameStem() +
-    (mode === "whole"
-      ? (density === 2 ? "_全体2倍.png" : "_全体高画質.png")
-      : "_表示範囲高画質.png"));
-}
-
-
-
 /**
  * V024: portable single-page image PDF. This is intentionally a FIT-TO-PAGE
  * raster PDF, not a 1:50 etc. CAD-scale or vector PDF. No network resources.
@@ -1058,85 +861,23 @@ function cadPdfFile(paper: "A4" | "A3", mode: PdfRangeMode = pdfRangeMode): File
 
 function updateShareControls(): void {
   const loaded = parsedState !== null;
-  const nativeJwwLoaded = loaded && parsedState?.cad.format === "jww";
-  saveJwwButton.disabled = !nativeJwwLoaded;
-  shareEditedJwwButton.disabled = !nativeJwwLoaded || effectiveTextChanges().length===0;
-  shareEditedJwwZipButton.disabled = shareEditedJwwButton.disabled;
+  saveJwwButton.disabled = !loaded || parsedState?.cad.format !== "jww";
   openSharePanelButton.disabled = !loaded;
-  shareOriginalFileButton.disabled = !loaded;
-  saveWorkSessionButton.disabled = !loaded;
-  sharePreviewImageButton.disabled = !loaded;
-  shareWhole2xButton.disabled = !loaded;
-  saveWhole2xButton.disabled = !loaded;
   sharePdfButton.disabled = !loaded;
   savePdfButton.disabled = !loaded;
   pdfPaperSelect.disabled = !loaded;
-  shareWholeImageButton.disabled = !loaded;
-  saveWholeImageButton.disabled = !loaded;
-  savePreviewImageButton.disabled = !loaded;
-  shareOriginalZipButton.disabled = !loaded;
-  saveOriginalZipButton.disabled = !loaded;
-  shareEditedDxfButton.disabled = !loaded ||
-    parsedState?.cad.format !== "jww" || effectiveTextChanges().length === 0;
-  shareEditedZipButton.disabled = shareEditedDxfButton.disabled;
+  pdfRangeSelect.disabled = !loaded;
 }
 
 openSharePanelButton.addEventListener("click", () => {
   updateShareControls();
   shareResult.textContent = "";
+  shareResult.hidden = true;
   sharePanel.hidden = !sharePanel.hidden;
 });
 closeSharePanelButton.addEventListener("click", () => {
   sharePanel.hidden = true;
 });
-shareOriginalFileButton.addEventListener("click", () => {
-  const file = originalCadFile();
-  if (!file) return;
-  void shareOrDownload(file);
-});
-shareEditedDxfButton.addEventListener("click", () => {
-  try {
-    const file = changedDxfFile();
-    if (!file) return;
-    void shareOrDownload(file);
-  } catch (error) {
-    shareStatus("編集DXFの作成に失敗しました。元データは変更されていません。" +
-      (error instanceof Error ? error.message : String(error)));
-  }
-});
-sharePreviewImageButton.addEventListener("click", () => {
-  try { void shareOrDownload(highResolutionPngFile("viewport")); }
-  catch (error) { shareStatus("範囲画像の作成に失敗：" + String(error)); }
-});
-shareWholeImageButton.addEventListener("click", () => {
-  try { void shareOrDownload(highResolutionPngFile("whole")); }
-  catch (error) { shareStatus("全体画像の作成に失敗：" + String(error)); }
-});
-saveWholeImageButton.addEventListener("click", () => {
-  try {
-    saveFileLocally(highResolutionPngFile("whole"));
-    shareStatus("全体PNGを保存しました。LINEで画質を維持したい場合はトークの「＋」→「ファイル」から選んでください。");
-  } catch (error) { shareStatus("全体画像保存に失敗：" + String(error)); }
-});
-savePreviewImageButton.addEventListener("click", () => {
-  try {
-    saveFileLocally(highResolutionPngFile("viewport"));
-    shareStatus("表示範囲PNGを保存しました。LINEの「＋」→「ファイル」で送れます。");
-  } catch (error) { shareStatus("範囲画像保存に失敗：" + String(error)); }
-});
-shareWhole2xButton.addEventListener("click", () => {
-  try { void shareOrDownload(highResolutionPngFile("whole", 2)); }
-  catch (error) { shareStatus("2倍PNGの生成に失敗しました。標準PNGをお試しください：" + String(error)); }
-});
-saveWhole2xButton.addEventListener("click", () => {
-  try {
-    const file = highResolutionPngFile("whole", 2);
-    saveFileLocally(file);
-    shareStatus("2倍PNG（" + (file.size / 1048576).toFixed(2) +
-      " MB）を保存しました。失敗する機種では標準PNGをお使いください。");
-  } catch (error) { shareStatus("2倍PNGの保存に失敗しました。標準PNGをお試しください：" + String(error)); }
-});
-
 /** V025: derive print bounds in the same CAD coordinate system as drawDxf. */
 function viewMapping(): {
   bounds: Bounds;
@@ -1222,27 +963,19 @@ function clearPdfRangeAndReturnToEditing(): void {
   shareStatus("PDFの印刷範囲を解除しました。図面をタップして文字編集できます。");
 }
 function updatePdfRangeUi(): void {
-  const selecting = pdfRangeMode==="rectangle";
+  const selecting = pdfRangeMode === "rectangle";
   const picking = selecting && pdfRangePicking;
-  pdfRangeReselect.disabled=!parsedState;
-  pdfRangeClear.disabled=!parsedState || !selecting;
-  pdfRangeExit.hidden=!selecting || !parsedState ||
+  pdfRangeReselect.disabled = !parsedState;
+  pdfRangeClear.disabled = !parsedState || !selecting || !(pdfRangeStart || pdfRangeBounds);
+  pdfRangeExit.hidden = !selecting || !parsedState ||
     !(picking || pdfRangeStart || pdfRangeBounds);
-  pdfRangeIndicator.hidden=!picking || !parsedState;
+  pdfRangeIndicator.hidden = !picking || !parsedState;
+  pdfRangeStatus.hidden = !picking && !pdfRangeBounds;
   if (selecting) {
-    const label=pdfRangeBounds && !picking
-      ? "範囲選択済み。PDFに出力できます。文字も通常どおりタップして編集できます。"
-      : picking && pdfRangeStart
-        ? "2点目（対角）をタップしてください"
-        : picking
-          ? "1点目をタップしてください"
-          : "通常の文字編集モードです。PDF範囲は「範囲指定を開始・選び直す」から指定できます。";
-    pdfRangeIndicator.textContent="PDF範囲指定：" + label;
-    pdfRangeStatus.textContent=label+" 図面のデータは削除されません。";
-  } else if (pdfRangeMode==="viewport") {
-    pdfRangeStatus.textContent="PDF保存・共有を押した時点で、表示中の画面範囲を出力します。文字編集も可能です。";
-  } else {
-    pdfRangeStatus.textContent="図面全体をPDFにします。文字編集できます。";
+    const label = pdfRangeBounds && !picking ? "範囲指定済み"
+      : pdfRangeStart ? "2点目をタップ" : "1点目をタップ";
+    pdfRangeIndicator.textContent = "PDF範囲：" + label;
+    pdfRangeStatus.textContent = label;
   }
 }
 function handlePdfRangeTap(point: {x:number;y:number}): void {
@@ -1257,7 +990,8 @@ function handlePdfRangeTap(point: {x:number;y:number}): void {
     const m=viewMapping();
     const minSpan=m ? 12/(m.scale*viewZoom) : 0;
     if (Math.abs(cad.x-a.x)<minSpan || Math.abs(cad.y-a.y)<minSpan) {
-      pdfRangeStatus.textContent="範囲が小さすぎます。もう少し離れた2点目をタップしてください。";
+      pdfRangeStatus.hidden=false;
+      pdfRangeStatus.textContent="範囲が小さすぎます。離れた位置をタップしてください。";
       return;
     }
     pdfRangeBounds={
@@ -1366,25 +1100,6 @@ savePdfButton.addEventListener("click", () => {
     shareStatus("PDF保存に失敗しました：" + String(error));
   }
 });
-shareOriginalZipButton.addEventListener("click", () => {
-  try { const file = originalCadZip(); if (file) void shareOrDownload(file); }
-  catch (error) { shareStatus("ZIP作成に失敗：" + String(error)); }
-});
-saveOriginalZipButton.addEventListener("click", () => {
-  try {
-    const file = originalCadZip();
-    if (file) {
-      saveFileLocally(file);
-      shareStatus("ZIPを保存しました。LINEの「＋」→「ファイル」から選択して送れます。");
-    }
-  } catch (error) { shareStatus("ZIP保存に失敗：" + String(error)); }
-});
-shareEditedZipButton.addEventListener("click", () => {
-  try { const file = editedDxfZip(); if (file) void shareOrDownload(file); }
-  catch (error) { shareStatus("編集DXFのZIP作成に失敗：" + String(error)); }
-});
-
-
 /**
  * V026 - crash/reload/back resilient local CAD session.
  *
@@ -1759,10 +1474,6 @@ leaveSaveButton.addEventListener("click", () => {
     leaveConfirmModal.hidden=true;
     window.history.back();
   });
-});
-saveWorkSessionButton.addEventListener("click", () => {
-  if (!parsedState) return;
-  void queueWorkingSave(true);
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState==="hidden") void queueWorkingSave();
