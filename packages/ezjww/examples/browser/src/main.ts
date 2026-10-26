@@ -263,8 +263,8 @@ app.innerHTML = `
   <button id="floating-fit-button" class="floating-fit-button" type="button" hidden aria-label="いつでも図面を全体表示">全体 ↺</button>
   <div id="leave-confirm" class="leave-confirm" hidden role="dialog" aria-modal="true" aria-labelledby="leave-confirm-title">
     <div class="leave-confirm-card">
-      <h2 id="leave-confirm-title">編集中の図面があります</h2>
-      <p>変更した文字と図面を、このiPhone内に一時保存してあります。ページを離れても、同じアプリを開けば作業を復元できます。</p>
+      <h2 id="leave-confirm-title">図面を開いています</h2>
+      <p id="leave-confirm-description">図面と編集内容は、このiPhone内に一時保存しています。</p>
       <p id="leave-confirm-status" class="leave-confirm-status"></p>
       <div class="leave-confirm-actions">
         <button id="leave-stay" type="button">編集を続ける</button>
@@ -280,6 +280,8 @@ const sessionStatusElement = document.querySelector<HTMLDivElement>("#session-st
 const saveWorkSessionButton = document.querySelector<HTMLButtonElement>("#save-work-session")!;
 const leaveConfirmModal = document.querySelector<HTMLDivElement>("#leave-confirm")!;
 const leaveConfirmStatus = document.querySelector<HTMLParagraphElement>("#leave-confirm-status")!;
+const leaveConfirmTitle = document.querySelector<HTMLHeadingElement>("#leave-confirm-title")!;
+const leaveConfirmDescription = document.querySelector<HTMLParagraphElement>("#leave-confirm-description")!;
 const leaveStayButton = document.querySelector<HTMLButtonElement>("#leave-stay")!;
 const leaveSaveButton = document.querySelector<HTMLButtonElement>("#leave-save")!;
 const dropzone = document.querySelector<HTMLDivElement>("#dropzone")!;
@@ -1199,6 +1201,7 @@ let workingDbPromise: Promise<IDBDatabase> | null = null;
 let workingWriteTail: Promise<void> = Promise.resolve();
 let workingSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let restoringWorkingSession = false;
+let workingRecoveryPromise: Promise<void> | null = null;
 let userOpenedFile = false;
 let workingWriteRevision = 0;
 let lastWorkingSaveError = "";
@@ -1341,6 +1344,13 @@ function matchesStoredText(entity:DxfEntity|undefined, orig:OriginalText):boolea
     typeof entity.y==="number" && Math.abs(entity.y-orig.y)<0.001 &&
     Math.abs((entity.rotation??0)-orig.rotation)<0.001;
 }
+function ensureWorkingRecovery(): Promise<void> {
+  if (workingRecoveryPromise) return workingRecoveryPromise;
+  workingRecoveryPromise=restoreWorkingSessionOnStartup().finally(() => {
+    workingRecoveryPromise=null;
+  });
+  return workingRecoveryPromise;
+}
 async function restoreWorkingSessionOnStartup():Promise<void> {
   if (currentInput || userOpenedFile) return;
   let snapshot:StoredWorkingSession|null=null;
@@ -1445,26 +1455,41 @@ function updateNavigationProtection():void {
   if (restoringWorkingSession) return;
   const dirty=hasPendingCadChanges();
   if (dirty && !leavingAfterConfirmation) {
+    // Safari may not display its own prompt; IndexedDB recovery is primary.
     window.addEventListener("beforeunload",beforeLeaving);
-    if (!leaveGuardArmed && !leaveDialogOpen) {
-      window.history.pushState(
-        {...(typeof window.history.state==="object" && window.history.state !== null
-          ?window.history.state:{}),__jwwWorkGuardV026:true},
-        "",window.location.href,
-      );
-      leaveGuardArmed=true;
-    }
   } else {
     window.removeEventListener("beforeunload",beforeLeaving);
+  }
+  // V028: keep a one-entry history guard for ALL loaded drawings, not
+  // just files whose text has changed. Original-only PDF export is protected.
+  if (!parsedState || leavingAfterConfirmation || leaveDialogOpen) return;
+  if (window.history.state?.__jwwWorkGuardV026) {
+    leaveGuardArmed=true;
+  } else if (!leaveGuardArmed) {
+    window.history.pushState(
+      {...(typeof window.history.state==="object" && window.history.state!==null
+        ?window.history.state:{}),__jwwWorkGuardV026:true},
+      "",window.location.href,
+    );
+    leaveGuardArmed=true;
   }
 }
 function showBackConfirmation():void {
   leaveDialogOpen=true;
   leaveConfirmModal.hidden=false;
+  const dirty=hasPendingCadChanges();
+  leaveConfirmTitle.textContent=dirty
+    ? "編集中の図面があります"
+    : "図面を開いたままにしますか？";
+  leaveConfirmDescription.textContent=dirty
+    ? "変更した文字と図面をiPhone内に一時保存しています。作業を続ける場合は「図面に戻る」を押してください。"
+    : "文字は未変更ですが、現在の図面と表示位置をiPhone内に保存しています。「図面に戻る」でCAD画面を維持できます。";
+  leaveStayButton.textContent="図面に戻る";
   leaveConfirmStatus.textContent=lastWorkingSaveError
     ? "端末内保存でエラー：" + lastWorkingSaveError
-    : "編集中の文字：" + effectiveTextChanges().length +
-      "件。確実な一時保存のため、この画面で保存して戻れます。";
+    : dirty
+      ? "現在の文字変更：" + effectiveTextChanges().length + "件。"
+      : "文字変更なし。元の図面を開いたままにできます。";
   leaveStayButton.focus();
 }
 window.addEventListener("popstate",(event:PopStateEvent) => {
@@ -1474,13 +1499,12 @@ window.addEventListener("popstate",(event:PopStateEvent) => {
   }
   if (!leaveGuardArmed) return;
   leaveGuardArmed=false;
-  if (hasPendingCadChanges() && !leavingAfterConfirmation) {
-    // We are on the original history entry; confirm BEFORE going further back.
+  if (parsedState && !leavingAfterConfirmation) {
+    // V028: preserve even unchanged drawings on browser Back; users must
+    // choose to leave, rather than silently lose the opened CAD view.
     void queueWorkingSave();
     showBackConfirmation();
   } else {
-    // Undoing all changes should not require a second Back press just
-    // because the now-unneeded history guard was once installed.
     window.history.back();
   }
 });
@@ -1492,7 +1516,7 @@ leaveStayButton.addEventListener("click", () => {
 leaveSaveButton.addEventListener("click", () => {
   leaveConfirmStatus.textContent="一時保存を完了しています…";
   leaveSaveButton.disabled=true;
-  void queueWorkingSave().then(() => {
+  void queueWorkingSave(true).then(() => {
     leaveSaveButton.disabled=false;
     if (lastWorkingSaveError) {
       leaveConfirmStatus.textContent="保存に失敗しました：" +
@@ -1520,6 +1544,10 @@ window.addEventListener("pageshow",event => {
   if (event.persisted && parsedState) {
     updateNavigationProtection();
     redrawZoom();
+  } else if (!parsedState && !currentInput && !userOpenedFile) {
+    // Safari can recreate the page when returning from a PDF/Share sheet.
+    // Recover the last opened drawing even when no text edits were made.
+    void ensureWasm().then(ensureWorkingRecovery);
   }
 });
 
@@ -1565,7 +1593,7 @@ downloadEditedDxf.addEventListener("click", () => {
 window.addEventListener("resize", redrawZoom);
 void ensureWasm().then(async () => {
   if (!parsedState) statusLine.textContent = "待機中";
-  await restoreWorkingSessionOnStartup();
+  await ensureWorkingRecovery();
 }).catch(error => {
   if (!parsedState) statusLine.textContent = "起動準備に失敗：" + String(error);
 });
