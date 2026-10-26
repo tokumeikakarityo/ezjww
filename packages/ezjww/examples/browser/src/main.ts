@@ -52,7 +52,7 @@ let viewZoom = 1, viewPanX = 0, viewPanY = 0, redrawQueued = false;
 // Preview-only POINT display size in CSS pixels at 100% zoom.
 const pointDisplayRadius = 0.75;
 let showJwwLineTypes = true;
-let canvasBackground: "white" | "black" = "white";
+let canvasBackground: "white" | "black" = "black";
 // Twofold increase from the V018 32x limit; bounded for iPhone precision.
 const MAX_VIEW_ZOOM = 64;
 const pointers = new Map<number, {x:number,y:number}>();
@@ -106,7 +106,7 @@ let nativeTextTotal = 0;
 app.innerHTML = `
   <header class="topbar">
     <div>
-      <div class="eyebrow">ezjww</div>
+      <div class="eyebrow">ezjww · V030</div>
       <h1>JWW簡易CAD</h1>
     </div>
     <div class="actions">
@@ -130,8 +130,6 @@ app.innerHTML = `
       </label>
     </div>
   </header>
-  <div id="session-status" class="session-status" role="status" aria-live="polite" hidden></div>
-
   <section id="share-panel" class="cad-share-panel" hidden aria-label="ファイル共有">
     <div class="cad-share-head">
       <strong>図面を共有</strong>
@@ -216,14 +214,16 @@ app.innerHTML = `
           </label>
           <label class="point-size-control">背景
             <select id="canvas-background-select" aria-label="図面の背景色">
-              <option value="white" selected>白</option>
-              <option value="black">黒</option>
+              <option value="white">白</option>
+              <option value="black" selected>黒</option>
             </select>
           </label>
         </div>
       </div>
-      <div id="drawing-stage" class="drawing-stage">
+      <div class="drawing-frame">
+        <div id="drawing-stage" class="drawing-stage">
         <canvas id="preview-canvas" class="preview" width="1200" height="760"></canvas>
+        <button id="floating-fit-button" class="floating-fit-button" type="button" hidden aria-label="図面を全体表示">全体 ↺</button>
         <div id="pdf-range-indicator" class="pdf-range-indicator" hidden>PDF範囲：図面上の1点目をタップ</div>
         <button id="pdf-range-exit" class="pdf-range-exit" type="button" hidden>✕ 範囲クリア・文字編集へ</button>
         <div id="text-edit-panel" class="text-edit-panel" hidden>
@@ -246,6 +246,8 @@ app.innerHTML = `
           <div id="text-edit-note" class="text-edit-note">文字変更は端末内の作業に記憶します。JWW保存時は元図・属性を照合して安全に保存できる場合のみ別名出力します。</div>
         </div>
 
+        </div>
+        <div id="session-status" class="session-status" role="status" aria-live="polite" hidden></div>
       </div>
       <details class="preview-diagnostics">
         <summary>線種などの表示情報</summary>
@@ -263,7 +265,6 @@ app.innerHTML = `
       </details>
     </section>
   </main>
-  <button id="floating-fit-button" class="floating-fit-button" type="button" hidden aria-label="いつでも図面を全体表示">全体 ↺</button>
   <div id="leave-confirm" class="leave-confirm" hidden role="dialog" aria-modal="true" aria-labelledby="leave-confirm-title">
     <div class="leave-confirm-card">
       <h2 id="leave-confirm-title">図面を開いています</h2>
