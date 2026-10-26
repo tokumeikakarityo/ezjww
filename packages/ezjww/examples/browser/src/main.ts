@@ -105,7 +105,7 @@ let nativeTextTotal = 0;
 app.innerHTML = `
   <header class="topbar">
     <div>
-      <div class="eyebrow">ezjww · V032</div>
+      <div class="eyebrow">ezjww · V033</div>
       <h1>JWW簡易CAD</h1>
     </div>
     <div class="actions">
@@ -469,6 +469,24 @@ function saveFileLocally(file: File): void {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 }
+/**
+ * iOS Safari can open PDF Blob downloads as a new page. Returning from
+ * its built-in PDF viewer may re-create the CAD tab with NO drawing.
+ * Use the iOS file share sheet ("ファイルに保存") instead of Blob navigation.
+ */
+function isIosBrowser(): boolean {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function canShareFile(file: File): boolean {
+  try {
+    return typeof navigator.share === "function" &&
+      typeof navigator.canShare === "function" &&
+      navigator.canShare({files:[file]});
+  } catch {
+    return false;
+  }
+}
 
 function filenameStem(): string {
   return (parsedState?.fileName ?? "drawing").replace(/\.[^.]*$/, "");
@@ -488,29 +506,35 @@ function shareStatus(message: string): void {
 }
 
 async function shareOrDownload(file: File): Promise<void> {
-  // File sharing is optional at both browser and receiving-app levels.
-  // Never claim a recipient actually received it.
-  const fileList = [file];
-  const mayShare = typeof navigator.share === "function" &&
-    typeof navigator.canShare === "function" &&
-    navigator.canShare({ files: fileList });
-  if (!mayShare) {
+  // Never navigate away from CAD with a PDF Blob download on iPhone.
+  // The native share sheet includes iOS "ファイルに保存" and Mail/LINE.
+  const fileList=[file];
+  if (!canShareFile(file)) {
+    if (file.type==="application/pdf" && isIosBrowser()) {
+      shareStatus("PDFの保存メニューを開けません。Safariで開いてから再度お試しください。図面はそのまま保持しています。");
+      return;
+    }
     saveFileLocally(file);
-    shareStatus("このファイル形式はSafariから直接共有できないため、ダウンロードしました。iPhoneの「ファイル」アプリからメール・LINEで送ってください。");
+    shareStatus("この形式は直接共有できないためファイルを保存しました。");
     return;
   }
   try {
-    // Called directly from a user-pressed button (no async prep/await).
-    await navigator.share({ files: fileList, title: file.name });
-    shareStatus("iPhoneの共有操作が終了しました。送信先で送信完了をご確認ください。");
+    // Preserve the iPhone user gesture: no awaits before navigator.share.
+    await navigator.share({files:fileList,title:file.name});
+    shareStatus("共有画面を終了しました。保存・送信結果は選択したアプリで確認してください。");
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      shareStatus("共有をキャンセルしました。");
+    if (error instanceof DOMException && error.name==="AbortError") {
+      shareStatus("操作をキャンセルしました。");
       return;
     }
-    const reason = error instanceof Error ? error.message : String(error);
-    saveFileLocally(file);
-    shareStatus("直接共有できなかったためダウンロードしました。「ファイル」アプリから共有できます。（" + reason + "）");
+    const reason=error instanceof Error?error.message:String(error);
+    if (file.type==="application/pdf" && isIosBrowser()) {
+      // Never auto-fallback to Safari PDF navigation on an iPhone.
+      shareStatus("iPhoneのPDF保存メニューを開けませんでした："+reason);
+    } else {
+      saveFileLocally(file);
+      shareStatus("直接共有できなかったためファイルを保存しました："+reason);
+    }
   }
 }
 
@@ -853,6 +877,8 @@ function updateShareControls(): void {
 }
 
 openSharePanelButton.addEventListener("click", () => {
+  // Start saving the source JWW and editing session well before exporting.
+  void queueWorkingSave();
   updateShareControls();
   shareResult.textContent = "";
   shareResult.hidden = true;
@@ -1066,6 +1092,7 @@ function ensurePdfRangeSelected(): boolean {
 sharePdfButton.addEventListener("click", () => {
   if (!ensurePdfRangeSelected()) return;
   try {
+    void queueWorkingSave();
     const file = cadPdfFile(selectedPdfPaper(), pdfRangeMode);
     void shareOrDownload(file);
   } catch (error) {
@@ -1075,10 +1102,17 @@ sharePdfButton.addEventListener("click", () => {
 savePdfButton.addEventListener("click", () => {
   if (!ensurePdfRangeSelected()) return;
   try {
+    // iPhone: Open native share sheet so "ファイルに保存" does not
+    // navigate Safari to an in-browser PDF preview and reset CAD state.
+    void queueWorkingSave();
     const file = cadPdfFile(selectedPdfPaper(), pdfRangeMode);
-    saveFileLocally(file);
-    shareStatus("PDF（" + selectedPdfPaper() + "、" + (file.size / 1048576).toFixed(2) +
-      " MB）を保存しました。iPhoneのファイルアプリで確認できます。");
+    if (isIosBrowser()) {
+      shareStatus("iPhoneの共有画面で「ファイルに保存」を選んでください。");
+      void shareOrDownload(file);
+    } else {
+      saveFileLocally(file);
+      shareStatus("PDFを保存しました。");
+    }
   } catch (error) {
     shareStatus("PDF保存に失敗しました：" + String(error));
   }
@@ -1126,6 +1160,7 @@ let workingDbPromise: Promise<IDBDatabase> | null = null;
 let workingWriteTail: Promise<void> = Promise.resolve();
 let workingSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let restoringWorkingSession = false;
+let recoveryFailureWasReported = false;
 let workingRecoveryPromise: Promise<void> | null = null;
 let userOpenedFile = false;
 let workingWriteRevision = 0;
@@ -1271,21 +1306,32 @@ function matchesStoredText(entity:DxfEntity|undefined, orig:OriginalText):boolea
     typeof entity.y==="number" && Math.abs(entity.y-orig.y)<0.001 &&
     Math.abs((entity.rotation??0)-orig.rotation)<0.001;
 }
-function ensureWorkingRecovery(): Promise<void> {
+function ensureWorkingRecovery(force=false): Promise<void> {
   if (workingRecoveryPromise) return workingRecoveryPromise;
-  workingRecoveryPromise=restoreWorkingSessionOnStartup().finally(() => {
+  workingRecoveryPromise=restoreWorkingSessionOnStartup(force).finally(() => {
     workingRecoveryPromise=null;
   });
   return workingRecoveryPromise;
 }
-async function restoreWorkingSessionOnStartup():Promise<void> {
-  if (currentInput || userOpenedFile) return;
+function showRecoveryProblemOnce(message:string):void {
+  if (recoveryFailureWasReported) return;
+  recoveryFailureWasReported=true;
+  // This is an exceptional dialog, not a persistent notification below CAD.
+  window.setTimeout(()=>{
+    alert("前回の図面を復元できませんでした。\n\n" + message +
+      "\n\n元のJWWファイルは変更していません。必要に応じて「ファイル選択」から開き直してください。");
+  },0);
+}
+async function restoreWorkingSessionOnStartup(force=false):Promise<void> {
+  if (parsedState || restoringWorkingSession) return;
+  if (!force && (currentInput || userOpenedFile)) return;
   let snapshot:StoredWorkingSession|null=null;
   try {
     snapshot=await getStoredWorkingSession();
   } catch(error) {
-    setWorkingStatus("端末内の一時保存が使えません：" +
-      (error instanceof Error?error.message:String(error)),true);
+    const reason=error instanceof Error?error.message:String(error);
+    setWorkingStatus("端末内の一時保存が使えません：" + reason,true);
+    if (force) showRecoveryProblemOnce(reason);
     return;
   }
   if (!snapshot || userOpenedFile || currentInput) return;
@@ -1360,9 +1406,18 @@ async function restoreWorkingSessionOnStartup():Promise<void> {
     setWorkingStatus("前回の作業を復元しました：" + snapshot.fileName +
       " ／ 文字変更 " + effectiveTextChanges().length + "件。元JWWは変更していません。");
   } catch(error) {
-    setWorkingStatus("復元に問題があります：" +
-      (error instanceof Error?error.message:String(error)) +
-      "。元ファイルを選択して確認してください。",true);
+    const reason=error instanceof Error?error.message:String(error);
+    setWorkingStatus("復元に問題があります：" + reason,true);
+    // A failed recovery must not lock the app into an empty screen forever.
+    if (!parsedState) {
+      currentInput=null;
+      showRecoveryProblemOnce(reason);
+    } else {
+      // If native file parsing succeeded, preserve the original drawing
+      // even when one historical text edit is no longer safely applicable.
+      render();
+      showRecoveryProblemOnce("元の図面は読み込めましたが、文字の復元に問題があります：" + reason);
+    }
   } finally {
     restoringWorkingSession=false;
     updateNavigationProtection();
@@ -1465,13 +1520,19 @@ window.addEventListener("pagehide", () => {
   void queueWorkingSave();
 });
 window.addEventListener("pageshow",event => {
-  if (event.persisted && parsedState) {
+  if (parsedState) {
+    // A WebKit back/forward-cache restore must retain the open CAD as-is.
     updateNavigationProtection();
-    redrawZoom();
-  } else if (!parsedState && !currentInput && !userOpenedFile) {
-    // Safari can recreate the page when returning from a PDF/Share sheet.
-    // Recover the last opened drawing even when no text edits were made.
-    void ensureWasm().then(ensureWorkingRecovery);
+    if (event.persisted) redrawZoom();
+  } else {
+    // PDF previews can return to a recreated or stale page. Retry
+    // IndexedDB restoration EVEN IF an earlier read left currentInput set.
+    void ensureWasm().then(()=>ensureWorkingRecovery(true));
+  }
+});
+document.addEventListener("visibilitychange",()=>{
+  if (document.visibilityState==="visible" && !parsedState) {
+    void ensureWasm().then(()=>ensureWorkingRecovery(true));
   }
 });
 
