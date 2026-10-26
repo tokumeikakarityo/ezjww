@@ -995,3 +995,35 @@ h1 {
   box-shadow: 0 2px 12px rgba(20,40,60,.13);
   pointer-events: none;
 }
+
+
+/* V029: restored-session and manual-save notice near screen bottom.
+ * Does not move the CAD view and disappears after a few seconds. */
+.session-status {
+  position:fixed;
+  top:auto;
+  bottom:max(72px, calc(env(safe-area-inset-bottom) + 56px));
+  left:50%;
+  right:auto;
+  transform:translateX(-50%);
+  width:min(420px, calc(100vw - 24px));
+  max-height:110px;
+  overflow:auto;
+  margin:0;
+  z-index:99;
+  background:#1c364c;
+  color:#fff;
+  border:1px solid #46687e;
+  border-radius:12px;
+  box-shadow:0 3px 14px rgba(0,0,0,.18);
+  font-size:12px;
+  text-align:center;
+  padding:10px 14px;
+  pointer-events:none;
+}
+.session-status.warn {
+  background:#754018;
+  color:#fff;
+  border-color:#e0ab5a;
+}
+.session-status[hidden]{display:none!important}

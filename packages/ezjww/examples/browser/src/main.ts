@@ -634,7 +634,7 @@ function mfcUnicodeString(value:string):Uint8Array {
   return out;
 }
 interface JwwTextPatch { start:number;end:number; replacement:Uint8Array; index:number }
-function editedJwwFile():File {
+function editedJwwBytes(): Uint8Array {
   if(!currentInput || !parsedState || parsedState.cad.format!=="jww") {
     throw new Error("JWW図面を開いてください。");
   }
@@ -643,8 +643,7 @@ function editedJwwFile():File {
   }
   const changes=effectiveTextChanges();
   if(changes.length===0) {
-    return new File([Uint8Array.from(currentInput.bytes)],
-      filenameStem()+"_原図.jww",{type:"application/octet-stream"});
+    return Uint8Array.from(currentInput.bytes);
   }
   const doc=parsedState.cad.document;
   // Native JWW versions below 700 are not assumed to understand arbitrary
@@ -728,8 +727,13 @@ function editedJwwFile():File {
       throw new Error("文字以外の図形や属性、または文字内容に差があるため保存を中止しました（要素"+i+"）。");
     }
   }
-  return new File([Uint8Array.from(output)],
-    filenameStem()+"_文字変更.jww",{type:"application/octet-stream"});
+  return output;
+}
+function editedJwwFile():File {
+  const verifiedBytes=editedJwwBytes();
+  return new File([Uint8Array.from(verifiedBytes)],
+    filenameStem()+(effectiveTextChanges().length?"_文字変更.jww":"_原図.jww"),
+    {type:"application/octet-stream"});
 }
 function originalJwwBackup():File {
   if(!currentInput || !parsedState || parsedState.cad.format!=="jww")
@@ -760,14 +764,10 @@ shareEditedJwwButton.addEventListener("click",()=>{
 shareEditedJwwZipButton.addEventListener("click",()=>{
   try {
     if(!effectiveTextChanges().length)return;
-    const file=editedJwwFile();
-    // Prepare file bytes for the ZIP via FileReader. The native share call
-    // must happen in a user-gesture context when iOS requires it, so the ZIP
-    // is offered as local download if Web Share is unavailable.
-    void file.arrayBuffer().then(buffer=>{
-      const result=cadZip(new Uint8Array(buffer),file.name,filenameStem()+"_文字変更JWW.zip");
-      void shareOrDownload(result);
-    }).catch(jwwSaveError);
+    const verifiedBytes=editedJwwBytes();
+    const result=cadZip(verifiedBytes,filenameStem()+"_文字変更.jww",
+      filenameStem()+"_文字変更JWW.zip");
+    void shareOrDownload(result);
   }catch(error){jwwSaveError(error);}
 });
 
@@ -1422,10 +1422,17 @@ let leaveGuardArmed = false;
 let leaveDialogOpen = false;
 let leavingAfterConfirmation = false;
 
+let workingToastTimer: ReturnType<typeof setTimeout> | null = null;
 function setWorkingStatus(message: string, warning = false): void {
+  if (workingToastTimer!==null) clearTimeout(workingToastTimer);
   sessionStatusElement.hidden = false;
   sessionStatusElement.textContent = message;
   sessionStatusElement.classList.toggle("warn", warning);
+  // Bottom toast disappears automatically. Warnings have longer visibility.
+  workingToastTimer=setTimeout(()=>{
+    sessionStatusElement.hidden=true;
+    workingToastTimer=null;
+  },warning?11000:4500);
 }
 function workingDb(): Promise<IDBDatabase> {
   if (workingDbPromise) return workingDbPromise;
