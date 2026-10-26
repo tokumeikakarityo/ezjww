@@ -828,6 +828,7 @@ function updateShareControls(): void {
   const loaded = parsedState !== null;
   openSharePanelButton.disabled = !loaded;
   shareOriginalFileButton.disabled = !loaded;
+  saveWorkSessionButton.disabled = !loaded;
   sharePreviewImageButton.disabled = !loaded;
   shareWhole2xButton.disabled = !loaded;
   saveWhole2xButton.disabled = !loaded;
@@ -1412,6 +1413,10 @@ window.addEventListener("popstate",(event:PopStateEvent) => {
     // We are on the original history entry; confirm BEFORE going further back.
     void queueWorkingSave();
     showBackConfirmation();
+  } else {
+    // Undoing all changes should not require a second Back press just
+    // because the now-unneeded history guard was once installed.
+    window.history.back();
   }
 });
 leaveStayButton.addEventListener("click", () => {
@@ -1556,6 +1561,19 @@ async function reparseCurrentInput(): Promise<void> {
 }
 
 async function parseFile(file: File): Promise<void> {
+  // A new drawing replaces the single "last working session" on this device.
+  // Never silently discard unfinished text changes from the current drawing.
+  if (hasPendingCadChanges()) {
+    const proceed=window.confirm(
+      "編集中の文字があります。別の図面を開くと、この端末の一時保存も新しい図面に切り替わります。\n" +
+      "必要な場合は「キャンセル」で戻り、先に「編集DXF保存」を行ってください。\n\n" +
+      "現在の編集を終了して新しい図面を開きますか？",
+    );
+    if (!proceed) {
+      fileInput.value="";
+      return;
+    }
+  }
   userOpenedFile = true;
   resetZoom();
   const bytes = new Uint8Array(await file.arrayBuffer());
