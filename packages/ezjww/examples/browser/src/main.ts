@@ -117,9 +117,10 @@ app.innerHTML = `
       <label class="toggle" hidden>JWCの座標
         <select id="coordinate-select"><option value="paper_millimeters">紙上mm</option><option value="model_millimeters">実寸mm</option></select>
       </label>
-      <button id="download-button" class="tool-button" type="button" disabled>DXF保存（原図）</button>
-      <button id="download-edited-dxf" class="tool-button" type="button" disabled>編集DXF保存</button>
-      <button id="open-share-panel" class="tool-button" type="button" disabled>共有・PDF</button>
+      <button id="save-jww" class="tool-button" type="button" disabled>JWW保存</button>
+      <button id="download-button" class="tool-button" type="button" disabled hidden style="display:none">DXF保存（原図）</button>
+      <button id="download-edited-dxf" class="tool-button" type="button" disabled hidden style="display:none">編集DXF保存</button>
+      <button id="open-share-panel" class="tool-button" type="button" disabled>PDF保存(共有等)</button>
       <button id="sample-button" class="tool-button" type="button" hidden>サンプル読込</button>
       <button id="create-button" class="tool-button" type="button" hidden>JWW作成例</button>
       <button id="download-jww-button" class="tool-button" type="button" disabled hidden>生成JWW保存</button>
@@ -137,11 +138,13 @@ app.innerHTML = `
       <button id="close-share-panel" type="button" aria-label="共有画面を閉じる">×</button>
     </div>
     <div class="cad-share-actions">
-      <button id="share-original-file" type="button">原JWWを共有</button>
-      <button id="share-edited-dxf" type="button" disabled>編集DXFを共有</button>
-      <button id="share-original-zip" type="button">原CADをZIPで共有</button>
-      <button id="save-original-zip" type="button">CADのZIPを保存</button>
-      <button id="share-edited-zip" type="button" disabled>編集DXFをZIPで共有</button>
+      <button id="share-original-file" type="button">元JWWを共有</button>
+      <button id="share-edited-jww" type="button" disabled>文字変更JWWを共有</button>
+      <button id="share-edited-jww-zip" type="button" disabled>文字変更JWWをZIP共有</button>
+      <button id="share-edited-dxf" type="button" disabled hidden style="display:none">編集DXFを共有</button>
+      <button id="share-original-zip" type="button">元JWWをZIPで共有</button>
+      <button id="save-original-zip" type="button">元JWWをZIP保存</button>
+      <button id="share-edited-zip" type="button" disabled hidden style="display:none">編集DXFをZIPで共有</button>
       <button id="share-whole-image" type="button">図面全体（高画質PNG）</button>
       <button id="share-preview-image" type="button">表示中の範囲（高画質PNG）</button>
       <button id="save-whole-image" type="button">全体PNGを保存</button>
@@ -179,7 +182,7 @@ app.innerHTML = `
       <button id="save-work-session" type="button">現在の作業をiPhone内に一時保存</button>
       <span>図面と文字変更履歴を自動記憶します。ブラウザのデータ消去では失われます。</span>
     </div>
-    <p class="cad-share-note">LINEでCAD形式が拒否される場合はZIPを保存して「＋」→「ファイル」から送れます。2倍PNGは最大辺約6,600px・最大約4,000万画素の試験機能で、大きなメモリを使用します。PDFは印刷用の高画質画像を埋め込む形式で、図面の実寸縮尺は保証しません。元のCADデータは変更しません。</p>
+    <p class="cad-share-note">JWW保存は元図を別名保存します。文字変更JWWは元文字・座標・属性と一致する箇所だけをバイナリ更新し、再読込で図形・属性の一致を確認できた場合のみ出力します。未対応の図面では保存を拒否します。Jw_cad 7.11での確認は必要です。LINEで直接JWWが送れない場合はZIPをご利用ください。PDFの印刷縮尺は保証しません。</p>
     <p id="share-result" class="cad-share-result" role="status" aria-live="polite"></p>
   </section>
 
@@ -240,7 +243,7 @@ app.innerHTML = `
             <button id="text-edit-redo" type="button" disabled>やり直す</button>
             <button id="text-edit-clear" type="button" disabled>選択解除</button>
           </div>
-          <div id="text-edit-note" class="text-edit-note">変更はプレビュー専用です。JWWとDXF保存は元データのままです。</div>
+          <div id="text-edit-note" class="text-edit-note">文字変更は端末内の作業に記憶します。JWW保存時は元図・属性を照合して安全に保存できる場合のみ別名出力します。</div>
         </div>
 
       </div>
@@ -270,7 +273,7 @@ app.innerHTML = `
         <button id="leave-stay" type="button">編集を続ける</button>
         <button id="leave-save" type="button">一時保存して戻る</button>
       </div>
-      <small>一時保存はJWW形式の上書き保存ではありません。正式な保管には「編集DXF保存」を利用してください。</small>
+      <small>端末内一時保存は元JWWの上書きではありません。JWW保存は別ファイルとして作成します。文字変更JWWは保存後にJw_cad 7.11で確認してください。</small>
     </div>
   </div>
 `;
@@ -290,6 +293,7 @@ const explodeToggle = document.querySelector<HTMLInputElement>("#explode-toggle"
 const sampleButton = document.querySelector<HTMLButtonElement>("#sample-button")!;
 const canvas = document.querySelector<HTMLCanvasElement>("#preview-canvas")!;
 const coordinateSelect = document.querySelector<HTMLSelectElement>("#coordinate-select")!;
+const saveJwwButton = document.querySelector<HTMLButtonElement>("#save-jww")!;
 const downloadButton = document.querySelector<HTMLButtonElement>("#download-button")!;
 const downloadEditedDxf = document.querySelector<HTMLButtonElement>("#download-edited-dxf")!;
 const createButton = document.querySelector<HTMLButtonElement>("#create-button")!;
@@ -299,6 +303,8 @@ const sharePanel = document.querySelector<HTMLElement>("#share-panel")!;
 const closeSharePanelButton = document.querySelector<HTMLButtonElement>("#close-share-panel")!;
 const shareOriginalFileButton = document.querySelector<HTMLButtonElement>("#share-original-file")!;
 const shareEditedDxfButton = document.querySelector<HTMLButtonElement>("#share-edited-dxf")!;
+const shareEditedJwwButton = document.querySelector<HTMLButtonElement>("#share-edited-jww")!;
+const shareEditedJwwZipButton = document.querySelector<HTMLButtonElement>("#share-edited-jww-zip")!;
 const sharePreviewImageButton = document.querySelector<HTMLButtonElement>("#share-preview-image")!;
 const shareWholeImageButton = document.querySelector<HTMLButtonElement>("#share-whole-image")!;
 const saveWholeImageButton = document.querySelector<HTMLButtonElement>("#save-whole-image")!;
@@ -561,6 +567,209 @@ function originalCadFile(): File | null {
   return new File([Uint8Array.from(currentInput.bytes)],
     parsedState.fileName, { type: "application/octet-stream" });
 }
+
+/**
+ * Non-destructive JWW save: for the original drawing return identical bytes;
+ * for edited JWW, change ONLY the serialized MFC Unicode TEXT content.
+ * A strict parse-back and comparison reject unsupported or ambiguous cases.
+ * This does not re-create the drawing with the lossy version-700 writer.
+ */
+interface SerializedMfcString {
+  content: string;
+  end: number;
+  unicode: boolean;
+}
+function mfcStringAt(bytes:Uint8Array,at:number,encoding:"shift_jis"|"utf-8"="shift_jis"):SerializedMfcString|null {
+  if (at<0 || at>=bytes.length) return null;
+  let offset=at, count=bytes[offset++]!, unicode=false;
+  const word=():number|null=>{
+    if(offset+2>bytes.length)return null;
+    const v=bytes[offset]!|(bytes[offset+1]!<<8);offset+=2;return v;
+  };
+  const dword=():number|null=>{
+    if(offset+4>bytes.length)return null;
+    const v=(bytes[offset]!|(bytes[offset+1]!<<8)|
+      (bytes[offset+2]!<<16)|(bytes[offset+3]!<<24))>>>0;offset+=4;return v;
+  };
+  if(count===255){
+    const w=word();if(w===null)return null;
+    if(w===0xfffe){
+      unicode=true;
+      if(offset>=bytes.length)return null;
+      const inner=bytes[offset++]!;
+      if(inner<255)count=inner;
+      else {
+        const w2=word();if(w2===null)return null;
+        if(w2<65535)count=w2;
+        else {const d=dword();if(d===null)return null;count=d;}
+      }
+    }else if(w<65535)count=w;
+    else {const d=dword();if(d===null)return null;count=d;}
+  }
+  const size=count*(unicode?2:1);
+  if(!Number.isSafeInteger(size)||size<0||offset+size>bytes.length)return null;
+  try {
+    const decoder=new TextDecoder(unicode?"utf-16le":encoding,{fatal:true});
+    const content=decoder.decode(bytes.subarray(offset,offset+size)).replace(/\0+$/u,"");
+    return {content,end:offset+size,unicode};
+  }catch{return null;}
+}
+function nativeTextHeader(t:NativeJwwText):Uint8Array {
+  // CDataMoji: 4 x f64 position, u32 text_type, 4 x f64 text properties
+  const arr=new Uint8Array(68),v=new DataView(arr.buffer);
+  [t.startX,t.startY,t.endX,t.endY].forEach((x,i)=>v.setFloat64(i*8,x,true));
+  v.setUint32(32,t.textType,true);
+  [t.sizeX,t.sizeY,t.spacing,t.angle].forEach((x,i)=>v.setFloat64(36+i*8,x,true));
+  return arr;
+}
+function mfcUnicodeString(value:string):Uint8Array {
+  const units=value.length, head=units<255?4:units<65534?6:10;
+  const out=new Uint8Array(head+2*units);
+  out[0]=255;out[1]=254;out[2]=255;
+  const dv=new DataView(out.buffer);
+  if(units<255)out[3]=units;
+  else if(units<65534){out[3]=255;dv.setUint16(4,units,true);}
+  else {out[3]=255;dv.setUint16(4,65535,true);dv.setUint32(6,units,true);}
+  for(let i=0;i<units;i++)dv.setUint16(head+2*i,value.charCodeAt(i),true);
+  return out;
+}
+interface JwwTextPatch { start:number;end:number; replacement:Uint8Array; index:number }
+function editedJwwFile():File {
+  if(!currentInput || !parsedState || parsedState.cad.format!=="jww") {
+    throw new Error("JWW図面を開いてください。");
+  }
+  if(currentUnappliedText()) {
+    throw new Error("入力中の文字があります。「文字変更」で確定してからJWW保存してください。");
+  }
+  const changes=effectiveTextChanges();
+  if(changes.length===0) {
+    return new File([Uint8Array.from(currentInput.bytes)],
+      filenameStem()+"_原図.jww",{type:"application/octet-stream"});
+  }
+  const doc=parsedState.cad.document;
+  // Native JWW versions below 700 are not assumed to understand arbitrary
+  // Unicode CString changes. Do not ever rewrite their entire archives.
+  if(doc.header.version!==700){
+    throw new Error("変更済JWWの安全保存はJWW形式700のみ対応です。元図JWW保存またはPDFをご使用ください。");
+  }
+  const raw=currentInput.bytes;
+  const byEntity=new Map<number,string>();
+  const patches:JwwTextPatch[]=[];
+  for(const change of changes){
+    const match=nativeTextByDxfIndex.get(change.index);
+    if(!match || match.content!==change.before){
+      throw new Error("変更文字「"+change.before+"」の元JWW位置を一意に確認できません。別の図面情報を変更せず保存を中止しました。");
+    }
+    const indexes:number[]=[];
+    for(let i=0;i<doc.entities.length;i++){
+      const e=doc.entities[i];
+      if(e.type==="TEXT" && e.content===match.content &&
+        e.start_x===match.startX && e.start_y===match.startY &&
+        e.end_x===match.endX && e.end_y===match.endY &&
+        e.text_type===match.textType && e.font_name===match.fontName &&
+        e.base.layer===match.layer && e.base.layer_group===match.layerGroup){
+        indexes.push(i);
+      }
+    }
+    if(indexes.length!==1){
+      throw new Error("元JWW内の文字の同定が不確実なため、変更JWW保存を中止しました。");
+    }
+    const signature=nativeTextHeader(match);
+    let found:JwwTextPatch|null=null,count=0;
+    for(let offset=0;offset+signature.length+7<=raw.length;offset++){
+      if(raw[offset]!==signature[0] || raw[offset+8]!==signature[8] ||
+         raw[offset+32]!==signature[32] || raw[offset+60]!==signature[60])continue;
+      let same=true;
+      for(let j=0;j<signature.length;j++){
+        if(raw[offset+j]!==signature[j]){same=false;break;}
+      }
+      if(!same)continue;
+      const font=mfcStringAt(raw,offset+signature.length);
+      if(!font || font.content!==match.fontName)continue;
+      const content=mfcStringAt(raw,font.end,doc.text_encoding==="utf-8"?"utf-8":"shift_jis");
+      if(!content || content.content!==change.before || !content.unicode)continue;
+      found={start:font.end,end:content.end,replacement:mfcUnicodeString(change.after),index:indexes[0]};
+      count++;
+      if(count>1)break;
+    }
+    if(count!==1||!found){
+      throw new Error("元JWW文字「"+change.before+"」のバイナリ位置が一意に照合できません。安全のため保存しません。");
+    }
+    byEntity.set(found.index,change.after);
+    patches.push(found);
+  }
+  patches.sort((a,b)=>a.start-b.start);
+  for(let i=1;i<patches.length;i++)if(patches[i].start<patches[i-1].end) {
+    throw new Error("変更範囲が重複したため、JWW保存を中止しました。");
+  }
+  const newLength=raw.length+patches.reduce((n,p)=>n+p.replacement.length-(p.end-p.start),0);
+  if(newLength<=0 || newLength>1000000000)throw new Error("JWWファイル容量が制限を超えました。");
+  const output=new Uint8Array(newLength);
+  let from=0,to=0;
+  for(const p of patches){
+    output.set(raw.subarray(from,p.start),to);to+=p.start-from;
+    output.set(p.replacement,to);to+=p.replacement.length;from=p.end;
+  }
+  output.set(raw.subarray(from),to);
+  const reread=readCadDocument(output) as CadDocument;
+  if(reread.format!=="jww")throw new Error("保存結果をJWWとして再読込できません。");
+  const rd=reread.document;
+  const equal=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
+  for(const key of ["header","block_defs","images","entity_counts",
+    "block_def_names","validation","metadata_settings"] as const){
+    if(!equal(doc[key],rd[key]))throw new Error(
+      "元図の情報（"+key+"）が一致しないため保存を拒否しました。");
+  }
+  if(doc.entities.length!==rd.entities.length)throw new Error("図形数が変化するため保存を中止しました。");
+  for(let i=0;i<doc.entities.length;i++){
+    const original=doc.entities[i],outputEntity=rd.entities[i];
+    const expected=byEntity.has(i)?{...original,content:byEntity.get(i)}:original;
+    if(!equal(expected,outputEntity)) {
+      throw new Error("文字以外の図形や属性、または文字内容に差があるため保存を中止しました（要素"+i+"）。");
+    }
+  }
+  return new File([Uint8Array.from(output)],
+    filenameStem()+"_文字変更.jww",{type:"application/octet-stream"});
+}
+function originalJwwBackup():File {
+  if(!currentInput || !parsedState || parsedState.cad.format!=="jww")
+    throw new Error("JWW図面を読み込んでください。");
+  return new File([Uint8Array.from(currentInput.bytes)],
+    filenameStem()+"_原図.jww",{type:"application/octet-stream"});
+}
+function jwwSaveError(error:unknown):void {
+  const message=error instanceof Error?error.message:String(error);
+  alert("JWW保存を安全に完了できません。元JWWは変更されていません。\n\n"+message);
+}
+saveJwwButton.addEventListener("click",()=>{
+  try {
+    const file=editedJwwFile();
+    saveFileLocally(file);
+    setWorkingStatus("JWWを別名保存しました："+file.name);
+    if(effectiveTextChanges().length>0) {
+      alert("変更済みJWWを別名で保存しました。Jw_cad 7.11で図形・レイヤ・文字を確認してください。\n元JWWは変更していません。");
+    }
+  }catch(error){jwwSaveError(error);}
+});
+shareEditedJwwButton.addEventListener("click",()=>{
+  try {
+    if(!effectiveTextChanges().length)return;
+    void shareOrDownload(editedJwwFile());
+  }catch(error){jwwSaveError(error);}
+});
+shareEditedJwwZipButton.addEventListener("click",()=>{
+  try {
+    if(!effectiveTextChanges().length)return;
+    const file=editedJwwFile();
+    // Prepare file bytes for the ZIP via FileReader. The native share call
+    // must happen in a user-gesture context when iOS requires it, so the ZIP
+    // is offered as local download if Web Share is unavailable.
+    void file.arrayBuffer().then(buffer=>{
+      const result=cadZip(new Uint8Array(buffer),file.name,filenameStem()+"_文字変更JWW.zip");
+      void shareOrDownload(result);
+    }).catch(jwwSaveError);
+  }catch(error){jwwSaveError(error);}
+});
 
 function changedDxfFile(): File | null {
   if (!parsedState || !currentInput || parsedState.cad.format !== "jww") return null;
@@ -835,6 +1044,10 @@ function cadPdfFile(paper: "A4" | "A3", mode: PdfRangeMode = pdfRangeMode): File
 
 function updateShareControls(): void {
   const loaded = parsedState !== null;
+  const nativeJwwLoaded = loaded && parsedState?.cad.format === "jww";
+  saveJwwButton.disabled = !nativeJwwLoaded;
+  shareEditedJwwButton.disabled = !nativeJwwLoaded || effectiveTextChanges().length===0;
+  shareEditedJwwZipButton.disabled = shareEditedJwwButton.disabled;
   openSharePanelButton.disabled = !loaded;
   shareOriginalFileButton.disabled = !loaded;
   saveWorkSessionButton.disabled = !loaded;
