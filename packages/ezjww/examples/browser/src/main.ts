@@ -660,6 +660,9 @@ function editedJwwBytes(): Uint8Array {
   if(doc.header.version!==700){
     throw new Error("変更済JWWの安全保存はJWW形式700のみ対応です。元図JWW保存またはPDFをご使用ください。");
   }
+  if(doc.diagnostics.some(d=>d.severity==="error")){
+    throw new Error("元JWWの解析にエラーがあります。元の図形を守るため文字変更JWWの保存を行いません。");
+  }
   const raw=currentInput.bytes;
   const sourceEncoding=(doc as unknown as {text_encoding?:string}).text_encoding;
   const byEntity=new Map<number,string>();
@@ -723,6 +726,9 @@ function editedJwwBytes(): Uint8Array {
   const reread=readCadDocument(output) as CadDocument;
   if(reread.format!=="jww")throw new Error("保存結果をJWWとして再読込できません。");
   const rd=reread.document;
+  if(rd.diagnostics.some(d=>d.severity==="error")){
+    throw new Error("書き出したJWWに解析エラーがあるため保存を中止しました。");
+  }
   const equal=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
   const sourceObj=doc as unknown as Record<string,unknown>;
   const verifyObj=rd as unknown as Record<string,unknown>;
@@ -1563,7 +1569,7 @@ function queueWorkingSave(showFeedback = false): Promise<void> {
       lastWorkingSaveError=error instanceof Error ? error.message : String(error);
       if (revision===workingWriteRevision) {
         setWorkingStatus("一時保存できません：" + lastWorkingSaveError +
-          "。編集中の文字はDXFで別名保存してください。",true);
+          "。重要な作業はJWWまたはPDFで別名保存し、元図を残してください。",true);
       }
     }
   });
@@ -1752,7 +1758,7 @@ leaveSaveButton.addEventListener("click", () => {
     leaveSaveButton.disabled=false;
     if (lastWorkingSaveError) {
       leaveConfirmStatus.textContent="保存に失敗しました：" +
-        lastWorkingSaveError+"。編集DXFを保存してから画面を離れてください。";
+        lastWorkingSaveError+"。可能な場合はJWWかPDFを別名保存してから画面を離れてください。";
       return;
     }
     leavingAfterConfirmation=true;
@@ -1891,7 +1897,7 @@ async function parseFile(file: File): Promise<void> {
   if (hasPendingCadChanges()) {
     const proceed=window.confirm(
       "編集中の文字があります。別の図面を開くと、この端末の一時保存も新しい図面に切り替わります。\n" +
-      "必要な場合は「キャンセル」で戻り、先に「編集DXF保存」を行ってください。\n\n" +
+      "必要な場合は「キャンセル」で戻り、先に「JWW保存」を行ってください。\n\n" +
       "現在の編集を終了して新しい図面を開きますか？",
     );
     if (!proceed) {
@@ -2790,7 +2796,7 @@ function syncTextEditPanel(): void {
   textEditInput.value = entity?.content ?? "";
   textEditNote.textContent = "変更履歴：" + textUndoStack.length +
     "件／現在の変更文字：" + effectiveTextChanges().length +
-    "件。編集DXFは別名で保存します。JWW原図は変更しません。";
+    "件。JWW保存時は文字と属性を照合して別名保存します。元のJWWは変更しません。";
   updateTextEditControls();
 }
 function applyTextEdit(): void {
@@ -2802,7 +2808,7 @@ function applyTextEdit(): void {
   if (!originalText.has(index)) {
     const original = entity;
     if (typeof original.x !== "number" || typeof original.y !== "number") {
-      textEditNote.textContent = "この文字は座標情報が不足しているため編集DXFを保存できません。";
+      textEditNote.textContent = "文字の座標情報が不足しています。JWW保存の可否も文字位置の照合結果によります。";
       return;
     }
     originalText.set(index, {
