@@ -1323,8 +1323,11 @@ function showRecoveryProblemOnce(message:string):void {
       "\n\n元のJWWファイルは変更していません。必要に応じて「ファイル選択」から開き直してください。");
   },0);
 }
+// Read live state through a function: parseBytes() mutates parsedState,
+// so an early empty-state guard must not narrow it to "never" after await.
+function hasActiveDrawing(): boolean { return parsedState !== null; }
 async function restoreWorkingSessionOnStartup(force=false):Promise<void> {
-  if (parsedState || restoringWorkingSession) return;
+  if (hasActiveDrawing() || restoringWorkingSession) return;
   if (!force && (currentInput || userOpenedFile)) return;
   let snapshot:StoredWorkingSession|null=null;
   try {
@@ -1338,7 +1341,7 @@ async function restoreWorkingSessionOnStartup(force=false):Promise<void> {
   // A Safari PDF viewer can return to an empty, partially initialized app.
   // Force-recovery is allowed even if an earlier load left currentInput set,
   // but never overwrite a healthy drawing or a file currently being read.
-  if (!snapshot || parsedState || readingUserFile ||
+  if (!snapshot || hasActiveDrawing() || readingUserFile ||
       (!force && (userOpenedFile || currentInput))) return;
   if (snapshot.version!==1 || !snapshot.bytes ||
       !["string"].includes(typeof snapshot.fileName)) {
