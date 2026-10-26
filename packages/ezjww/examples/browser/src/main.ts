@@ -126,6 +126,7 @@ app.innerHTML = `
       </label>
     </div>
   </header>
+  <div id="session-status" class="session-status" role="status" aria-live="polite" hidden></div>
 
   <section id="share-panel" class="cad-share-panel" hidden aria-label="ファイル共有">
     <div class="cad-share-head">
@@ -169,6 +170,10 @@ app.innerHTML = `
         <button id="share-pdf" type="button">PDFを共有</button>
         <button id="save-pdf" type="button">PDFを保存</button>
       </div>
+    </div>
+    <div class="cad-session-tools">
+      <button id="save-work-session" type="button">現在の作業をiPhone内に一時保存</button>
+      <span>図面と文字変更履歴を自動記憶します。ブラウザのデータ消去では失われます。</span>
     </div>
     <p class="cad-share-note">LINEでCAD形式が拒否される場合はZIPを保存して「＋」→「ファイル」から送れます。2倍PNGは最大辺約6,600px・最大約4,000万画素の試験機能で、大きなメモリを使用します。PDFは印刷用の高画質画像を埋め込む形式で、図面の実寸縮尺は保証しません。元のCADデータは変更しません。</p>
     <p id="share-result" class="cad-share-result" role="status" aria-live="polite"></p>
@@ -251,9 +256,27 @@ app.innerHTML = `
     </section>
   </main>
   <button id="floating-fit-button" class="floating-fit-button" type="button" hidden aria-label="いつでも図面を全体表示">全体 ↺</button>
+  <div id="leave-confirm" class="leave-confirm" hidden role="dialog" aria-modal="true" aria-labelledby="leave-confirm-title">
+    <div class="leave-confirm-card">
+      <h2 id="leave-confirm-title">編集中の図面があります</h2>
+      <p>変更した文字と図面を、このiPhone内に一時保存してあります。ページを離れても、同じアプリを開けば作業を復元できます。</p>
+      <p id="leave-confirm-status" class="leave-confirm-status"></p>
+      <div class="leave-confirm-actions">
+        <button id="leave-stay" type="button">編集を続ける</button>
+        <button id="leave-save" type="button">一時保存して戻る</button>
+      </div>
+      <small>一時保存はJWW形式の上書き保存ではありません。正式な保管には「編集DXF保存」を利用してください。</small>
+    </div>
+  </div>
 `;
 
 const fileInput = document.querySelector<HTMLInputElement>("#file-input")!;
+const sessionStatusElement = document.querySelector<HTMLDivElement>("#session-status")!;
+const saveWorkSessionButton = document.querySelector<HTMLButtonElement>("#save-work-session")!;
+const leaveConfirmModal = document.querySelector<HTMLDivElement>("#leave-confirm")!;
+const leaveConfirmStatus = document.querySelector<HTMLParagraphElement>("#leave-confirm-status")!;
+const leaveStayButton = document.querySelector<HTMLButtonElement>("#leave-stay")!;
+const leaveSaveButton = document.querySelector<HTMLButtonElement>("#leave-save")!;
 const dropzone = document.querySelector<HTMLDivElement>("#dropzone")!;
 const statusLine = document.querySelector<HTMLDivElement>("#status-line")!;
 const explodeToggle = document.querySelector<HTMLInputElement>("#explode-toggle")!;
@@ -302,6 +325,7 @@ const floatingFitButton = document.querySelector<HTMLButtonElement>("#floating-f
 const zoomLevel = document.querySelector<HTMLSpanElement>("#zoom-level")!;
 function redrawZoom(): void {
   zoomLevel.textContent = Math.round(viewZoom * 100) + "%";
+  scheduleWorkingSave(1300);
   if (redrawQueued) return;
   redrawQueued = true;
   requestAnimationFrame(() => {
@@ -409,13 +433,19 @@ floatingFitButton.addEventListener("click", fitWholeDrawing);
 document.querySelector<HTMLSelectElement>("#line-style-select")!.addEventListener("change", e => {
   showJwwLineTypes = (e.currentTarget as HTMLSelectElement).value === "original";
   redrawZoom();
+  scheduleWorkingSave(350);
 });
 document.querySelector<HTMLSelectElement>("#canvas-background-select")!.addEventListener("change", e => {
   canvasBackground = (e.currentTarget as HTMLSelectElement).value === "black" ? "black" : "white";
   redrawZoom();
+  scheduleWorkingSave(350);
 });
 // Keep editing separate from the gesture controls and the original DXF exporter.
-textEditInput.addEventListener("input", updateTextEditControls);
+textEditInput.addEventListener("input", () => {
+  updateTextEditControls();
+  updateNavigationProtection();
+  scheduleWorkingSave(160);
+});
 textEditInput.addEventListener("keydown", event => {
   if (event.key === "Enter") {
     event.preventDefault();
@@ -430,6 +460,8 @@ function closeTextEditor(): void {
   selectedTextIndex = null;
   syncTextEditPanel();
   redrawZoom();
+  queueWorkingSave();
+  updateNavigationProtection();
 }
 textEditClear.addEventListener("click", closeTextEditor);
 textEditClose.addEventListener("click", closeTextEditor);
@@ -973,6 +1005,7 @@ function handlePdfRangeTap(point: {x:number;y:number}): void {
   }
   updatePdfRangeUi();
   redrawZoom();
+  scheduleWorkingSave(450);
 }
 function drawPdfRangeOverlay(ctx:CanvasRenderingContext2D): void {
   if (pdfRangeMode!=="rectangle") return;
@@ -1011,6 +1044,7 @@ pdfRangeSelect.addEventListener("change", () => {
     : next === "rectangle" ? "rectangle" : "whole";
   updatePdfRangeUi();
   redrawZoom();
+  scheduleWorkingSave(350);
   if (pdfRangeMode === "rectangle") {
     document.querySelector("#drawing-stage")?.scrollIntoView({
       block: "center", behavior: "smooth",
@@ -1024,6 +1058,7 @@ pdfRangeReselect.addEventListener("click", () => {
   pdfRangeSelect.value = "rectangle";
   updatePdfRangeUi();
   redrawZoom();
+  scheduleWorkingSave(350);
   document.querySelector("#drawing-stage")?.scrollIntoView({
     block: "center", behavior: "smooth",
   });
@@ -1062,6 +1097,360 @@ saveOriginalZipButton.addEventListener("click", () => {
 shareEditedZipButton.addEventListener("click", () => {
   try { const file = editedDxfZip(); if (file) void shareOrDownload(file); }
   catch (error) { shareStatus("編集DXFのZIP作成に失敗：" + String(error)); }
+});
+
+
+/**
+ * V026 - crash/reload/back resilient local CAD session.
+ *
+ * IndexedDB stores the ORIGINAL bytes, never rewritten JWW bytes, alongside
+ * preview-only text replacements. A copy is taken for each snapshot.
+ *
+ * Storage is local to this browser/PWA installation: there are no uploads.
+ * Browser data removal, private mode and iOS eviction can remove the draft.
+ */
+interface PersistedTextEdit {
+  index: number;
+  original: OriginalText;
+  after: string;
+}
+interface StoredWorkingSession {
+  version: 1;
+  fileName: string;
+  fileSize: number;
+  bytes: Uint8Array;
+  generated: boolean;
+  savedAt: number;
+  edits: PersistedTextEdit[];
+  undoStack: TextChange[];
+  redoStack: TextChange[];
+  selectedTextIndex: number | null;
+  draft: { index: number; value: string } | null;
+  viewZoom: number;
+  viewPanX: number;
+  viewPanY: number;
+  canvasBackground: "white" | "black";
+  showJwwLineTypes: boolean;
+  explodeInserts: boolean;
+  jwcCoordinates: JwcCoordinateSpace;
+  pdfRangeMode: PdfRangeMode;
+  pdfRangeStart: {x:number;y:number} | null;
+  pdfRangeBounds: Bounds | null;
+  pdfPaper: "A4" | "A3";
+}
+
+let workingDbPromise: Promise<IDBDatabase> | null = null;
+let workingWriteTail: Promise<void> = Promise.resolve();
+let workingSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let restoringWorkingSession = false;
+let userOpenedFile = false;
+let workingWriteRevision = 0;
+let lastWorkingSaveError = "";
+let leaveGuardArmed = false;
+let leaveDialogOpen = false;
+let leavingAfterConfirmation = false;
+
+function setWorkingStatus(message: string, warning = false): void {
+  sessionStatusElement.hidden = false;
+  sessionStatusElement.textContent = message;
+  sessionStatusElement.classList.toggle("warn", warning);
+}
+function workingDb(): Promise<IDBDatabase> {
+  if (workingDbPromise) return workingDbPromise;
+  workingDbPromise = new Promise<IDBDatabase>((resolve,reject) => {
+    if (!("indexedDB" in window)) {
+      reject(new Error("このブラウザは端末内保存に対応していません"));
+      return;
+    }
+    const request = indexedDB.open("JWW_CAD_LOCAL_WORK_V026",1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains("sessions")) {
+        request.result.createObjectStore("sessions");
+      }
+    };
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => db.close();
+      resolve(db);
+    };
+    request.onerror = () => reject(request.error ??
+      new Error("iPhoneの一時保存領域を開けませんでした"));
+    request.onblocked = () => reject(new Error("一時保存領域がほかの画面で使用中です"));
+  }).catch(error => {
+    workingDbPromise = null;
+    throw error;
+  });
+  return workingDbPromise;
+}
+async function getStoredWorkingSession(): Promise<StoredWorkingSession | null> {
+  const db=await workingDb();
+  return new Promise((resolve,reject) => {
+    const request=db.transaction("sessions","readonly").objectStore("sessions").get("latest");
+    request.onsuccess = () => resolve((request.result as StoredWorkingSession | undefined) ?? null);
+    request.onerror = () => reject(request.error ?? new Error("一時保存の読込に失敗しました"));
+  });
+}
+async function writeStoredWorkingSession(data: StoredWorkingSession): Promise<void> {
+  const db=await workingDb();
+  await new Promise<void>((resolve,reject) => {
+    const transaction=db.transaction("sessions","readwrite");
+    transaction.objectStore("sessions").put(data,"latest");
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(transaction.error ?? new Error("一時保存が中断されました"));
+    transaction.onerror = () => reject(transaction.error ?? new Error("一時保存の書き込みに失敗しました"));
+  });
+}
+function currentUnappliedText(): {index:number;value:string} | null {
+  if (selectedTextIndex === null) return null;
+  const entity=selectedTextEntity();
+  if (!entity || entity.content === textEditInput.value) return null;
+  return {index:selectedTextIndex,value:textEditInput.value};
+}
+function hasPendingCadChanges(): boolean {
+  return !!parsedState &&
+    (effectiveTextChanges().length > 0 || currentUnappliedText() !== null);
+}
+function makeWorkingSnapshot(): StoredWorkingSession | null {
+  if (!currentInput || !parsedState) return null;
+  const edits: PersistedTextEdit[] = [];
+  for (const [index,orig] of originalText) {
+    const entity=parsedState.dxf.entities[index];
+    if (entity?.type==="TEXT" && typeof entity.content==="string") {
+      edits.push({index,original:{...orig},after:entity.content});
+    }
+  }
+  return {
+    version:1,
+    fileName:currentInput.name,fileSize:currentInput.size,
+    bytes:Uint8Array.from(currentInput.bytes),generated:!!currentInput.generated,
+    savedAt:Date.now(),
+    edits,undoStack:textUndoStack.map(e=>({...e})),redoStack:textRedoStack.map(e=>({...e})),
+    selectedTextIndex,draft:currentUnappliedText(),
+    viewZoom,viewPanX,viewPanY,canvasBackground,showJwwLineTypes,
+    explodeInserts,jwcCoordinates,pdfRangeMode,
+    pdfRangeStart:pdfRangeStart?{...pdfRangeStart}:null,
+    pdfRangeBounds:pdfRangeBounds?{...pdfRangeBounds}:null,
+    pdfPaper:selectedPdfPaper(),
+  };
+}
+function scheduleWorkingSave(delay = 300): void {
+  if (!parsedState || restoringWorkingSession) return;
+  if (workingSaveTimer !== null) clearTimeout(workingSaveTimer);
+  workingSaveTimer=setTimeout(() => {
+    workingSaveTimer=null;
+    queueWorkingSave();
+  },delay);
+}
+function queueWorkingSave(): Promise<void> {
+  if (workingSaveTimer !== null) {
+    clearTimeout(workingSaveTimer);
+    workingSaveTimer=null;
+  }
+  if (restoringWorkingSession) return workingWriteTail;
+  const snapshot=makeWorkingSnapshot();
+  if (!snapshot) return workingWriteTail;
+  const revision=++workingWriteRevision;
+  setWorkingStatus("iPhone内に作業を一時保存中…");
+  workingWriteTail=workingWriteTail.catch(() => undefined).then(async () => {
+    // Do not let queued snapshots of an older file overwrite the latest file.
+    if (revision !== workingWriteRevision) return;
+    try {
+      await writeStoredWorkingSession(snapshot);
+      lastWorkingSaveError="";
+      if (revision===workingWriteRevision) {
+        setWorkingStatus("iPhone内に一時保存済：" + snapshot.fileName +
+          (snapshot.edits.length || snapshot.draft ? "（文字変更を含む）" : "") +
+          " ／ " + new Date(snapshot.savedAt).toLocaleTimeString("ja-JP"));
+      }
+    } catch (error) {
+      lastWorkingSaveError=error instanceof Error ? error.message : String(error);
+      if (revision===workingWriteRevision) {
+        setWorkingStatus("一時保存できません：" + lastWorkingSaveError +
+          "。編集中の文字はDXFで別名保存してください。",true);
+      }
+    }
+  });
+  return workingWriteTail;
+}
+function matchesStoredText(entity:DxfEntity|undefined, orig:OriginalText):boolean {
+  return entity?.type==="TEXT" && entity.content===orig.before &&
+    entity.layer===orig.layer &&
+    typeof entity.x==="number" && Math.abs(entity.x-orig.x)<0.001 &&
+    typeof entity.y==="number" && Math.abs(entity.y-orig.y)<0.001 &&
+    Math.abs((entity.rotation??0)-orig.rotation)<0.001;
+}
+async function restoreWorkingSessionOnStartup():Promise<void> {
+  if (currentInput || userOpenedFile) return;
+  let snapshot:StoredWorkingSession|null=null;
+  try {
+    snapshot=await getStoredWorkingSession();
+  } catch(error) {
+    setWorkingStatus("端末内の一時保存が使えません：" +
+      (error instanceof Error?error.message:String(error)),true);
+    return;
+  }
+  if (!snapshot || userOpenedFile || currentInput) return;
+  if (snapshot.version!==1 || !snapshot.bytes ||
+      !["string"].includes(typeof snapshot.fileName)) {
+    setWorkingStatus("前回の一時保存データの形式が異なります。",true);
+    return;
+  }
+  restoringWorkingSession=true;
+  try {
+    // Strictly reuse the same JWW/JWC/JWS reader used by file input.
+    const input:CurrentInput={
+      name:snapshot.fileName,size:snapshot.fileSize,
+      bytes:Uint8Array.from(snapshot.bytes),generated:snapshot.generated,
+    };
+    currentInput=input;
+    explodeInserts=snapshot.explodeInserts;
+    jwcCoordinates=snapshot.jwcCoordinates;
+    explodeToggle.checked=explodeInserts;
+    coordinateSelect.value=jwcCoordinates;
+    await parseBytes(input);
+    if (!parsedState) throw new Error("図面データを復元できませんでした");
+    // Do not partially replace a changed/unsupported entity. Validate all
+    // indices and the ORIGINAL bytes before applying any preview edit.
+    for (const item of snapshot.edits) {
+      if (!matchesStoredText(parsedState.dxf.entities[item.index],item.original)) {
+        throw new Error("保存した文字と元図の照合に失敗しました。文字変更は復元していません");
+      }
+    }
+    for (const change of [...snapshot.undoStack,...snapshot.redoStack]) {
+      if (parsedState.dxf.entities[change.index]?.type!=="TEXT") {
+        throw new Error("文字変更履歴を安全に復元できませんでした");
+      }
+    }
+    for (const item of snapshot.edits) {
+      originalText.set(item.index,{...item.original});
+      parsedState.dxf.entities[item.index].content=item.after;
+    }
+    textUndoStack.push(...snapshot.undoStack.map(e=>({...e})));
+    textRedoStack.push(...snapshot.redoStack.map(e=>({...e})));
+    viewZoom=Number.isFinite(snapshot.viewZoom)
+      ? Math.max(0.5,Math.min(MAX_VIEW_ZOOM,snapshot.viewZoom)):1;
+    viewPanX=Number.isFinite(snapshot.viewPanX)?snapshot.viewPanX:0;
+    viewPanY=Number.isFinite(snapshot.viewPanY)?snapshot.viewPanY:0;
+    canvasBackground=snapshot.canvasBackground==="black"?"black":"white";
+    showJwwLineTypes=snapshot.showJwwLineTypes!==false;
+    document.querySelector<HTMLSelectElement>("#canvas-background-select")!.value=canvasBackground;
+    document.querySelector<HTMLSelectElement>("#line-style-select")!.value=
+      showJwwLineTypes?"original":"solid";
+    pdfRangeMode=["whole","viewport","rectangle"].includes(snapshot.pdfRangeMode)
+      ?snapshot.pdfRangeMode:"whole";
+    pdfRangeStart=snapshot.pdfRangeStart;
+    pdfRangeBounds=snapshot.pdfRangeBounds;
+    pdfRangeSelect.value=pdfRangeMode;
+    pdfPaperSelect.value=snapshot.pdfPaper==="A3"?"A3":"A4";
+    selectedTextIndex=typeof snapshot.selectedTextIndex==="number" &&
+      parsedState.dxf.entities[snapshot.selectedTextIndex]?.type==="TEXT"
+      ?snapshot.selectedTextIndex:null;
+    updatePdfRangeUi();
+    render();
+    if (snapshot.draft && snapshot.draft.index===selectedTextIndex) {
+      textEditInput.value=snapshot.draft.value;
+      updateTextEditControls();
+    }
+    redrawZoom();
+    statusLine.textContent=snapshot.fileName+" ／ 前回の作業を復元しました";
+    setWorkingStatus("前回の作業を復元しました：" + snapshot.fileName +
+      " ／ 文字変更 " + effectiveTextChanges().length + "件。元JWWは変更していません。");
+  } catch(error) {
+    setWorkingStatus("復元に問題があります：" +
+      (error instanceof Error?error.message:String(error)) +
+      "。元ファイルを選択して確認してください。",true);
+  } finally {
+    restoringWorkingSession=false;
+    updateNavigationProtection();
+  }
+}
+/**
+ * Browser back: a one-entry history guard allows a custom confirmation.
+ * Safari/iOS may bypass popstate or beforeunload in some lifecycle paths,
+ * so the IndexedDB snapshot above remains the essential recovery mechanism.
+ */
+function beforeLeaving(event:BeforeUnloadEvent):void {
+  if (leavingAfterConfirmation || !hasPendingCadChanges()) return;
+  queueWorkingSave();
+  event.preventDefault();
+  event.returnValue="";
+}
+function updateNavigationProtection():void {
+  if (restoringWorkingSession) return;
+  const dirty=hasPendingCadChanges();
+  if (dirty && !leavingAfterConfirmation) {
+    window.addEventListener("beforeunload",beforeLeaving);
+    if (!leaveGuardArmed && !leaveDialogOpen) {
+      window.history.pushState(
+        {...(typeof window.history.state==="object" && window.history.state !== null
+          ?window.history.state:{}),__jwwWorkGuardV026:true},
+        "",window.location.href,
+      );
+      leaveGuardArmed=true;
+    }
+  } else {
+    window.removeEventListener("beforeunload",beforeLeaving);
+  }
+}
+function showBackConfirmation():void {
+  leaveDialogOpen=true;
+  leaveConfirmModal.hidden=false;
+  leaveConfirmStatus.textContent=lastWorkingSaveError
+    ? "端末内保存でエラー：" + lastWorkingSaveError
+    : "編集中の文字：" + effectiveTextChanges().length +
+      "件。確実な一時保存のため、この画面で保存して戻れます。";
+  leaveStayButton.focus();
+}
+window.addEventListener("popstate",(event:PopStateEvent) => {
+  if (event.state?.__jwwWorkGuardV026) {
+    leaveGuardArmed=true;
+    return;
+  }
+  if (!leaveGuardArmed) return;
+  leaveGuardArmed=false;
+  if (hasPendingCadChanges() && !leavingAfterConfirmation) {
+    // We are on the original history entry; confirm BEFORE going further back.
+    void queueWorkingSave();
+    showBackConfirmation();
+  }
+});
+leaveStayButton.addEventListener("click", () => {
+  leaveConfirmModal.hidden=true;
+  leaveDialogOpen=false;
+  updateNavigationProtection();
+});
+leaveSaveButton.addEventListener("click", () => {
+  leaveConfirmStatus.textContent="一時保存を完了しています…";
+  leaveSaveButton.disabled=true;
+  void queueWorkingSave().then(() => {
+    leaveSaveButton.disabled=false;
+    if (lastWorkingSaveError) {
+      leaveConfirmStatus.textContent="保存に失敗しました：" +
+        lastWorkingSaveError+"。編集DXFを保存してから画面を離れてください。";
+      return;
+    }
+    leavingAfterConfirmation=true;
+    window.removeEventListener("beforeunload",beforeLeaving);
+    leaveDialogOpen=false;
+    leaveConfirmModal.hidden=true;
+    window.history.back();
+  });
+});
+saveWorkSessionButton.addEventListener("click", () => {
+  if (!parsedState) return;
+  void queueWorkingSave();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState==="hidden") void queueWorkingSave();
+});
+window.addEventListener("pagehide", () => {
+  void queueWorkingSave();
+});
+window.addEventListener("pageshow",event => {
+  if (event.persisted && parsedState) {
+    updateNavigationProtection();
+    redrawZoom();
+  }
 });
 
 function effectiveTextChanges(): Array<OriginalText & { after: string }> {
@@ -1104,8 +1493,11 @@ downloadEditedDxf.addEventListener("click", () => {
 });
 
 window.addEventListener("resize", redrawZoom);
-void ensureWasm().then(() => {
-  statusLine.textContent = "待機中";
+void ensureWasm().then(async () => {
+  if (!parsedState) statusLine.textContent = "待機中";
+  await restoreWorkingSessionOnStartup();
+}).catch(error => {
+  if (!parsedState) statusLine.textContent = "起動準備に失敗：" + String(error);
 });
 
 fileInput.addEventListener("change", () => {
@@ -1164,6 +1556,7 @@ async function reparseCurrentInput(): Promise<void> {
 }
 
 async function parseFile(file: File): Promise<void> {
+  userOpenedFile = true;
   resetZoom();
   const bytes = new Uint8Array(await file.arrayBuffer());
   currentInput = {
@@ -1241,6 +1634,7 @@ async function parseBytes(input: CurrentInput): Promise<void> {
   textUndoStack.length = 0;
   textRedoStack.length = 0;
   sharePanel.hidden = true;
+  updateNavigationProtection();
   originalText.clear();
   resetPdfRangeOnNewDrawing();
   nativeTextByDxfIndex.clear();
@@ -1276,10 +1670,12 @@ async function parseBytes(input: CurrentInput): Promise<void> {
     };
     statusLine.textContent = `${input.name} / ${formatBytes(input.size)}`;
     render();
+    if (!restoringWorkingSession) queueWorkingSave();
   } catch (error) {
     parsedState = null;
     statusLine.textContent = error instanceof Error ? error.message : String(error);
     render();
+    updateNavigationProtection();
   }
 }
 
@@ -1857,6 +2253,8 @@ function selectTextAt(point:{x:number,y:number}):void {
   selectedTextIndex=best?.index ?? null;
   syncTextEditPanel();
   redrawZoom();
+  scheduleWorkingSave(500);
+  updateNavigationProtection();
 }
 
 
@@ -2079,6 +2477,8 @@ function applyTextEdit(): void {
   entity.content = after;
   syncTextEditPanel();
   redrawZoom();
+  queueWorkingSave();
+  updateNavigationProtection();
 }
 function undoTextEdit(): void {
   if (!parsedState) return;
@@ -2094,6 +2494,8 @@ function undoTextEdit(): void {
   selectedTextIndex = change.index;
   syncTextEditPanel();
   redrawZoom();
+  queueWorkingSave();
+  updateNavigationProtection();
 }
 function redoTextEdit(): void {
   if (!parsedState) return;
@@ -2109,6 +2511,8 @@ function redoTextEdit(): void {
   selectedTextIndex = change.index;
   syncTextEditPanel();
   redrawZoom();
+  queueWorkingSave();
+  updateNavigationProtection();
 }
 
 function drawSelectedTextHighlight(ctx:CanvasRenderingContext2D):void {

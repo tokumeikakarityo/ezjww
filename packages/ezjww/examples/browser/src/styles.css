@@ -865,3 +865,86 @@ h1 {
   pointer-events:none;
 }
 .pdf-range-indicator[hidden] {display:none!important}
+
+
+/* V026: local recovery and back-navigation confirmation. */
+.session-status {
+  margin: 5px 12px 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #e8f3fb;
+  border: 1px solid #c6dce9;
+  color: #244a62;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.session-status[hidden] { display: none !important; }
+.session-status.warn {
+  color: #8a360f;
+  background: #fff4e8;
+  border-color: #e2b89a;
+}
+.cad-session-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 0;
+  border-bottom: 1px solid #cedcea;
+}
+.cad-session-tools button {
+  border: 1px solid #8ca9c4;
+  border-radius: 8px;
+  padding: 9px 11px;
+  background: white;
+  color: #204e77;
+  min-height: 44px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+.cad-session-tools span {
+  flex: 1 1 180px;
+  font-size: 12px;
+  color: #4d6070;
+  line-height: 1.5;
+}
+.leave-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(10, 26, 38, .65);
+}
+.leave-confirm[hidden] { display: none !important; }
+.leave-confirm-card {
+  width: 100%;
+  max-width: 440px;
+  max-height: 90dvh;
+  overflow: auto;
+  border-radius: 14px;
+  padding: 20px;
+  background: #fff;
+  color: #1c3041;
+  box-shadow: 0 8px 35px rgba(0,0,0,.2);
+}
+.leave-confirm-card h2 { margin: 0 0 10px; font-size: 19px; }
+.leave-confirm-card p { margin: 9px 0; font-size: 14px; line-height: 1.65; }
+.leave-confirm-status { color: #946014; }
+.leave-confirm-actions { display: grid; gap: 10px; margin: 15px 0; }
+.leave-confirm-actions button {
+  min-height: 48px;
+  border: 1px solid #93aac0;
+  border-radius: 9px;
+  background: #f4f8fd;
+  color: #254b73;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+}
+.leave-confirm-actions #leave-save { background: #1763a6; color: white; }
+.leave-confirm-card small { display: block; color: #576777; line-height: 1.6; }
