@@ -1652,8 +1652,8 @@ async function parseBytes(input: CurrentInput): Promise<void> {
   textUndoStack.length = 0;
   textRedoStack.length = 0;
   sharePanel.hidden = true;
-  updateNavigationProtection();
   originalText.clear();
+  updateNavigationProtection();
   resetPdfRangeOnNewDrawing();
   nativeTextByDxfIndex.clear();
   nativeTextMatched = 0;
@@ -1688,6 +1688,7 @@ async function parseBytes(input: CurrentInput): Promise<void> {
     };
     statusLine.textContent = `${input.name} / ${formatBytes(input.size)}`;
     render();
+    updateNavigationProtection();
     if (!restoringWorkingSession) queueWorkingSave();
   } catch (error) {
     parsedState = null;
