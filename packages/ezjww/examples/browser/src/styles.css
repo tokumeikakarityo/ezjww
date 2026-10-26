@@ -980,3 +980,18 @@ h1 {
   background: #fff7ee;
   border-color: #e2ad85;
 }
+
+/* V028: save messages float outside page layout; canvas never shifts on save. */
+.session-status {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top));
+  right: 10px;
+  left: auto;
+  width: min(410px, calc(100vw - 20px));
+  max-height: 86px;
+  overflow: auto;
+  margin: 0;
+  z-index: 90;
+  box-shadow: 0 2px 12px rgba(20,40,60,.13);
+  pointer-events: none;
+}

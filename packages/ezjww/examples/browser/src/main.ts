@@ -93,7 +93,7 @@ interface NativeJwwText {
   layer: number;
 }
 type PdfRangeMode = "whole" | "viewport" | "rectangle";
-let pdfRangeMode: PdfRangeMode = "whole";
+let pdfRangeMode: PdfRangeMode = "rectangle";
 // Selecting 2 points is a transient input state; PDF output mode and text
 // selection must NOT be tied together after the rectangle is complete.
 let pdfRangePicking = false;
@@ -159,15 +159,15 @@ app.innerHTML = `
       </label>
       <label for="pdf-range-select">印刷範囲
         <select id="pdf-range-select">
-          <option value="whole" selected>図面全体</option>
+          <option value="whole">図面全体</option>
           <option value="viewport">現在の画面</option>
-          <option value="rectangle">範囲指定（2点）</option>
+          <option value="rectangle" selected>範囲指定（2点）</option>
         </select>
       </label>
       <div class="cad-pdf-range-actions">
-        <button id="pdf-range-reselect" type="button">範囲を選び直す</button>
+        <button id="pdf-range-reselect" type="button">範囲指定を開始・選び直す</button>
         <button id="pdf-range-clear" type="button">範囲クリア・文字編集へ</button>
-        <span id="pdf-range-status" role="status" aria-live="polite">図面全体を出力します。</span>
+        <span id="pdf-range-status" role="status" aria-live="polite">PDF範囲指定を開始するまでは通常の文字編集ができます。</span>
       </div>
       <span class="cad-pdf-hint">現在の画面＝拡大・移動後の表示範囲／範囲指定＝図面上の2点をタップ。元の図面データは削除しません。白背景・用紙へ収める出力（縮尺指定なし）。</span>
       <div class="cad-share-actions">
@@ -973,20 +973,20 @@ function viewBoundsInCad(): Bounds | null {
 }
 function resetPdfRangeOnNewDrawing(): void {
   // A reopened drawing must always accept ordinary text taps.
-  pdfRangeMode="whole";
+  pdfRangeMode="rectangle";
   pdfRangePicking=false;
   pdfRangeStart=null;
   pdfRangeBounds=null;
-  pdfRangeSelect.value="whole";
+  pdfRangeSelect.value="rectangle";
   updatePdfRangeUi();
 }
 /** Leave the print-range tool without changing any CAD, text or undo data. */
 function clearPdfRangeAndReturnToEditing(): void {
-  pdfRangeMode="whole";
+  pdfRangeMode="rectangle";
   pdfRangePicking=false;
   pdfRangeStart=null;
   pdfRangeBounds=null;
-  pdfRangeSelect.value="whole";
+  pdfRangeSelect.value="rectangle";
   updatePdfRangeUi();
   redrawZoom();
   queueWorkingSave();
@@ -997,14 +997,17 @@ function updatePdfRangeUi(): void {
   const picking = selecting && pdfRangePicking;
   pdfRangeReselect.disabled=!parsedState;
   pdfRangeClear.disabled=!parsedState || !selecting;
-  pdfRangeExit.hidden=!selecting || !parsedState;
+  pdfRangeExit.hidden=!selecting || !parsedState ||
+    !(picking || pdfRangeStart || pdfRangeBounds);
   pdfRangeIndicator.hidden=!picking || !parsedState;
   if (selecting) {
     const label=pdfRangeBounds && !picking
       ? "範囲選択済み。PDFに出力できます。文字も通常どおりタップして編集できます。"
-      : pdfRangeStart
+      : picking && pdfRangeStart
         ? "2点目（対角）をタップしてください"
-        : "1点目をタップしてください";
+        : picking
+          ? "1点目をタップしてください"
+          : "通常の文字編集モードです。PDF範囲は「範囲指定を開始・選び直す」から指定できます。";
     pdfRangeIndicator.textContent="PDF範囲指定：" + label;
     pdfRangeStatus.textContent=label+" 図面のデータは削除されません。";
   } else if (pdfRangeMode==="viewport") {
@@ -1102,7 +1105,20 @@ pdfRangeReselect.addEventListener("click", () => {
 });
 pdfRangeClear.addEventListener("click", clearPdfRangeAndReturnToEditing);
 pdfRangeExit.addEventListener("click", clearPdfRangeAndReturnToEditing);
+function ensurePdfRangeSelected(): boolean {
+  if (pdfRangeMode !== "rectangle" || pdfRangeBounds) return true;
+  pdfRangePicking=true;
+  pdfRangeStart=null;
+  updatePdfRangeUi();
+  redrawZoom();
+  shareStatus("PDF範囲の対角2点を図面上でタップしてから、もう一度PDF保存・共有を押してください。");
+  document.querySelector("#drawing-stage")?.scrollIntoView({
+    block:"center",behavior:"smooth",
+  });
+  return false;
+}
 sharePdfButton.addEventListener("click", () => {
+  if (!ensurePdfRangeSelected()) return;
   try {
     const file = cadPdfFile(selectedPdfPaper(), pdfRangeMode);
     void shareOrDownload(file);
@@ -1111,6 +1127,7 @@ sharePdfButton.addEventListener("click", () => {
   }
 });
 savePdfButton.addEventListener("click", () => {
+  if (!ensurePdfRangeSelected()) return;
   try {
     const file = cadPdfFile(selectedPdfPaper(), pdfRangeMode);
     saveFileLocally(file);
@@ -1280,7 +1297,7 @@ function scheduleWorkingSave(delay = 300): void {
     queueWorkingSave();
   },delay);
 }
-function queueWorkingSave(): Promise<void> {
+function queueWorkingSave(showFeedback = false): Promise<void> {
   if (workingSaveTimer !== null) {
     clearTimeout(workingSaveTimer);
     workingSaveTimer=null;
@@ -1289,17 +1306,23 @@ function queueWorkingSave(): Promise<void> {
   const snapshot=makeWorkingSnapshot();
   if (!snapshot) return workingWriteTail;
   const revision=++workingWriteRevision;
-  setWorkingStatus("iPhone内に作業を一時保存中…");
+  // V028: background autosave must never trigger status/layout movement.
+  if (showFeedback) setWorkingStatus("iPhone内に作業を一時保存中…");
   workingWriteTail=workingWriteTail.catch(() => undefined).then(async () => {
     // Do not let queued snapshots of an older file overwrite the latest file.
     if (revision !== workingWriteRevision) return;
     try {
       await writeStoredWorkingSession(snapshot);
+      const previousError=lastWorkingSaveError;
       lastWorkingSaveError="";
       if (revision===workingWriteRevision) {
-        setWorkingStatus("iPhone内に一時保存済：" + snapshot.fileName +
-          (snapshot.edits.length || snapshot.draft ? "（文字変更を含む）" : "") +
-          " ／ " + new Date(snapshot.savedAt).toLocaleTimeString("ja-JP"));
+        if (showFeedback) {
+          setWorkingStatus("iPhone内に一時保存済：" + snapshot.fileName +
+            (snapshot.edits.length || snapshot.draft ? "（文字変更を含む）" : "") +
+            " ／ " + new Date(snapshot.savedAt).toLocaleTimeString("ja-JP"));
+        } else if (previousError) {
+          sessionStatusElement.hidden=true;
+        }
       }
     } catch (error) {
       lastWorkingSaveError=error instanceof Error ? error.message : String(error);
@@ -1378,7 +1401,8 @@ async function restoreWorkingSessionOnStartup():Promise<void> {
     // Print cropping is a temporary tool. Do not restore its touch-capture
     // mode from V025/V026 drafts: previously it made text impossible to pick.
     // Keep the original drawing, edited text, viewport and undo history.
-    pdfRangeMode=snapshot.pdfRangeMode==="viewport"?"viewport":"whole";
+    // PDF uses rectangle by default, while normal text taps remain active.
+    pdfRangeMode="rectangle";
     pdfRangePicking=false;
     pdfRangeStart=null;
     pdfRangeBounds=null;
@@ -1484,7 +1508,7 @@ leaveSaveButton.addEventListener("click", () => {
 });
 saveWorkSessionButton.addEventListener("click", () => {
   if (!parsedState) return;
-  void queueWorkingSave();
+  void queueWorkingSave(true);
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState==="hidden") void queueWorkingSave();
