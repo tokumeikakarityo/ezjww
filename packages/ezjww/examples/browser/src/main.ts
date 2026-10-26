@@ -106,7 +106,7 @@ let nativeTextTotal = 0;
 app.innerHTML = `
   <header class="topbar">
     <div>
-      <div class="eyebrow">ezjww · V030</div>
+      <div class="eyebrow">ezjww · V031</div>
       <h1>JWW簡易CAD</h1>
     </div>
     <div class="actions">
@@ -185,7 +185,7 @@ app.innerHTML = `
   </section>
 
   <main class="shell">
-    <section class="left-pane">
+    <section class="left-pane" hidden aria-hidden="true">
       <div id="dropzone" class="dropzone" tabindex="0">
         <div class="drop-title">JWW/JWC/JWSファイルをドロップ</div>
         <div id="status-line" class="drop-status">未読込</div>
@@ -206,12 +206,11 @@ app.innerHTML = `
           <button id="zoom-out" type="button">－</button>
           <span id="zoom-level">100%</span>
           <button id="zoom-in" type="button">＋</button>
-          <label class="point-size-control">線種
-            <select id="line-style-select" aria-label="線種表示">
-              <option value="original" selected>原図</option>
-              <option value="solid">実線で表示</option>
-            </select>
-          </label>
+          <!-- Original line styles are always on. Retain the hidden select as
+                 an internal compatibility hook for restored JWW sessions. -->
+          <select id="line-style-select" hidden style="display:none" aria-hidden="true">
+            <option value="original" selected>原図</option>
+          </select>
           <label class="point-size-control">背景
             <select id="canvas-background-select" aria-label="図面の背景色">
               <option value="white">白</option>
@@ -223,7 +222,7 @@ app.innerHTML = `
       <div class="drawing-frame">
         <div id="drawing-stage" class="drawing-stage">
         <canvas id="preview-canvas" class="preview" width="1200" height="760"></canvas>
-        <button id="floating-fit-button" class="floating-fit-button" type="button" hidden aria-label="図面を全体表示">全体 ↺</button>
+        <button id="floating-fit-button" class="floating-fit-button" type="button" hidden aria-label="図面を全体表示">全画面</button>
         <div id="pdf-range-indicator" class="pdf-range-indicator" hidden>PDF範囲：図面上の1点目をタップ</div>
         <button id="pdf-range-exit" class="pdf-range-exit" type="button" hidden>✕ 範囲クリア・文字編集へ</button>
         <div id="text-edit-panel" class="text-edit-panel" hidden>
@@ -247,19 +246,19 @@ app.innerHTML = `
         </div>
 
         </div>
-        <div id="session-status" class="session-status" role="status" aria-live="polite" hidden></div>
+        <div id="session-status" class="session-status" hidden aria-hidden="true" style="display:none"></div>
       </div>
-      <details class="preview-diagnostics">
+      <details class="preview-diagnostics" hidden aria-hidden="true" style="display:none">
         <summary>線種などの表示情報</summary>
         <div id="line-style-status" class="line-style-status" role="status">
           V013：補助線色・補助線種は常時非表示。ほかの線種を再現します。
         </div>
       </details>
-      <details id="font-audit-panel" class="font-audit-panel">
+      <details id="font-audit-panel" class="font-audit-panel" hidden aria-hidden="true" style="display:none">
         <summary>元図のフォント一覧・文字属性の照合結果</summary>
         <div id="font-audit-body" class="font-audit-body"></div>
       </details>
-      <details class="developer-details">
+      <details class="developer-details" hidden aria-hidden="true" style="display:none">
         <summary>開発用の詳細情報</summary>
         <div id="detail" class="detail"></div>
       </details>
@@ -446,11 +445,7 @@ function fitWholeDrawing(): void {
   redrawZoom();
 }
 floatingFitButton.addEventListener("click", fitWholeDrawing);
-document.querySelector<HTMLSelectElement>("#line-style-select")!.addEventListener("change", e => {
-  showJwwLineTypes = (e.currentTarget as HTMLSelectElement).value === "original";
-  redrawZoom();
-  scheduleWorkingSave(350);
-});
+// Line styles always follow the original JWW; no public mode switch.
 document.querySelector<HTMLSelectElement>("#canvas-background-select")!.addEventListener("change", e => {
   canvasBackground = (e.currentTarget as HTMLSelectElement).value === "black" ? "black" : "white";
   redrawZoom();
@@ -1441,17 +1436,12 @@ let leaveGuardArmed = false;
 let leaveDialogOpen = false;
 let leavingAfterConfirmation = false;
 
-let workingToastTimer: ReturnType<typeof setTimeout> | null = null;
+// V031: keep recovery/diagnostic information internally without a visible
+// message below the drawing. Blocking save errors still use existing dialogs.
 function setWorkingStatus(message: string, warning = false): void {
-  if (workingToastTimer!==null) clearTimeout(workingToastTimer);
-  sessionStatusElement.hidden = false;
   sessionStatusElement.textContent = message;
-  sessionStatusElement.classList.toggle("warn", warning);
-  // Bottom toast disappears automatically. Warnings have longer visibility.
-  workingToastTimer=setTimeout(()=>{
-    sessionStatusElement.hidden=true;
-    workingToastTimer=null;
-  },warning?11000:4500);
+  sessionStatusElement.hidden = true;
+  if (warning) console.warn("[JWW簡易CAD]", message);
 }
 function workingDb(): Promise<IDBDatabase> {
   if (workingDbPromise) return workingDbPromise;
@@ -1643,10 +1633,11 @@ async function restoreWorkingSessionOnStartup():Promise<void> {
     viewPanX=Number.isFinite(snapshot.viewPanX)?snapshot.viewPanX:0;
     viewPanY=Number.isFinite(snapshot.viewPanY)?snapshot.viewPanY:0;
     canvasBackground=snapshot.canvasBackground==="black"?"black":"white";
-    showJwwLineTypes=snapshot.showJwwLineTypes!==false;
+    // V031: override stale "solid" preview preferences from V020-V030.
+    // The native JWW line types and layer attributes are never altered.
+    showJwwLineTypes=true;
     document.querySelector<HTMLSelectElement>("#canvas-background-select")!.value=canvasBackground;
-    document.querySelector<HTMLSelectElement>("#line-style-select")!.value=
-      showJwwLineTypes?"original":"solid";
+    document.querySelector<HTMLSelectElement>("#line-style-select")!.value="original";
     // Print cropping is a temporary tool. Do not restore its touch-capture
     // mode from V025/V026 drafts: previously it made text impossible to pick.
     // Keep the original drawing, edited text, viewport and undo history.

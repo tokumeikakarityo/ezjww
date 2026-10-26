@@ -1073,3 +1073,32 @@ h1 {
   padding: 10px 12px;
   text-align: left;
 }
+
+
+/* V031: drawing-first interface. Internal reports stay available to code,
+ * but no panels, fake extra grid rows or notices invite scrolling below CAD.
+ * The font attributes INSIDE the text editor remain available on demand. */
+.left-pane,
+.left-pane[hidden],
+.preview-diagnostics,
+.font-audit-panel,
+.developer-details,
+.session-status {
+  display: none !important;
+}
+.shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+.right-pane {
+  grid-template-rows: auto minmax(320px, 1fr);
+}
+@media (max-width: 860px) {
+  .right-pane {
+    grid-template-rows: auto minmax(360px, min(65dvh, 560px));
+  }
+}
+@media (max-width: 520px) {
+  .right-pane {
+    grid-template-rows: auto 54dvh;
+  }
+}
