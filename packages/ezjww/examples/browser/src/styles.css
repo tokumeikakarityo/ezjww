@@ -826,3 +826,42 @@ h1 {
   line-height: 1.5;
 }
 .cad-pdf-settings .cad-share-actions { flex-basis: 100%; margin-top: 2px; }
+
+
+/* V025: non-destructive PDF range selection */
+.cad-pdf-range-actions {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  font-size:12px;
+  color:#405369;
+}
+.cad-pdf-range-actions button {
+  border:1px solid #b2c5d9;
+  border-radius:8px;
+  background:#fff;
+  color:#204e77;
+  padding:6px 10px;
+  min-height:38px;
+  font:inherit;
+  font-weight:700;
+}
+.cad-pdf-range-actions button:disabled {opacity:.4}
+.cad-pdf-range-actions span {flex:1;min-width:140px;line-height:1.45}
+.pdf-range-indicator {
+  position:absolute;
+  left:8px;
+  bottom:9px;
+  z-index:3;
+  max-width:calc(100% - 102px);
+  background:rgba(30,55,77,.92);
+  color:#fff;
+  border-radius:8px;
+  padding:7px 10px;
+  font-size:12px;
+  line-height:1.4;
+  pointer-events:none;
+}
+.pdf-range-indicator[hidden] {display:none!important}

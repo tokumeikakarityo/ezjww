@@ -92,6 +92,10 @@ interface NativeJwwText {
   layerGroup: number;
   layer: number;
 }
+type PdfRangeMode = "whole" | "viewport" | "rectangle";
+let pdfRangeMode: PdfRangeMode = "whole";
+let pdfRangeStart: {x:number;y:number} | null = null;
+let pdfRangeBounds: Bounds | null = null;
 const nativeTextByDxfIndex = new Map<number, NativeJwwText>();
 let nativeTextMatched = 0;
 let nativeTextTotal = 0;
@@ -149,7 +153,18 @@ app.innerHTML = `
           <option value="A3">A3</option>
         </select>
       </label>
-      <span class="cad-pdf-hint">縦横自動／白背景／図面全体／縮尺指定なし</span>
+      <label for="pdf-range-select">印刷範囲
+        <select id="pdf-range-select">
+          <option value="whole" selected>図面全体</option>
+          <option value="viewport">現在の画面</option>
+          <option value="rectangle">範囲指定（2点）</option>
+        </select>
+      </label>
+      <div class="cad-pdf-range-actions">
+        <button id="pdf-range-reselect" type="button">範囲を選び直す</button>
+        <span id="pdf-range-status" role="status" aria-live="polite">図面全体を出力します。</span>
+      </div>
+      <span class="cad-pdf-hint">現在の画面＝拡大・移動後の表示範囲／範囲指定＝図面上の2点をタップ。元の図面データは削除しません。白背景・用紙へ収める出力（縮尺指定なし）。</span>
       <div class="cad-share-actions">
         <button id="share-pdf" type="button">PDFを共有</button>
         <button id="save-pdf" type="button">PDFを保存</button>
@@ -197,6 +212,7 @@ app.innerHTML = `
       </div>
       <div id="drawing-stage" class="drawing-stage">
         <canvas id="preview-canvas" class="preview" width="1200" height="760"></canvas>
+        <div id="pdf-range-indicator" class="pdf-range-indicator" hidden>PDF範囲：図面上の1点目をタップ</div>
         <div id="text-edit-panel" class="text-edit-panel" hidden>
           <div class="editor-heading"><label for="text-edit-input">文字編集</label><button id="text-edit-close" type="button" aria-label="編集を閉じる">×</button></div>
           <div id="text-selection-status" class="text-selection-status" role="status" aria-live="polite">
@@ -263,6 +279,10 @@ const shareEditedZipButton = document.querySelector<HTMLButtonElement>("#share-e
 const shareWhole2xButton = document.querySelector<HTMLButtonElement>("#share-whole-image-2x")!;
 const saveWhole2xButton = document.querySelector<HTMLButtonElement>("#save-whole-image-2x")!;
 const pdfPaperSelect = document.querySelector<HTMLSelectElement>("#pdf-paper-select")!;
+const pdfRangeSelect = document.querySelector<HTMLSelectElement>("#pdf-range-select")!;
+const pdfRangeReselect = document.querySelector<HTMLButtonElement>("#pdf-range-reselect")!;
+const pdfRangeStatus = document.querySelector<HTMLSpanElement>("#pdf-range-status")!;
+const pdfRangeIndicator = document.querySelector<HTMLDivElement>("#pdf-range-indicator")!;
 const sharePdfButton = document.querySelector<HTMLButtonElement>("#share-pdf")!;
 const savePdfButton = document.querySelector<HTMLButtonElement>("#save-pdf")!;
 const shareResult = document.querySelector<HTMLParagraphElement>("#share-result")!;
@@ -362,7 +382,10 @@ function endGesture(e:PointerEvent):void {
   pointers.delete(e.pointerId);
   if(tapCandidate?.id===e.pointerId)tapCandidate=null;
   startGesture();
-  if(shouldPick)selectTextAt(point);
+  if (shouldPick) {
+    if (pdfRangeMode === "rectangle") handlePdfRangeTap(point);
+    else selectTextAt(point);
+  }
 }
 canvas.addEventListener("pointerup",endGesture);
 canvas.addEventListener("pointercancel",endGesture);
@@ -699,7 +722,7 @@ function pdfFromJpeg(jpeg: Uint8Array, imgWidth: number, imgHeight: number,
   return output;
 }
 
-function cadPdfFile(paper: "A4" | "A3"): File {
+function cadPdfFile(paper: "A4" | "A3", mode: PdfRangeMode = pdfRangeMode): File {
   if (!parsedState) throw new Error("図面を読み込んでください");
   const dxf = parsedState.dxf;
   const isJwc = !!dxf.jwc_conversion_report;
@@ -713,8 +736,16 @@ function cadPdfFile(paper: "A4" | "A3"): File {
       widths.set(entity, dxf.text_width_factors?.[index++] ?? 1);
     }
   }
-  const bounds = dxfBounds(dxf.entities.filter(e => !hidden.has(e.layer)), preview, widths);
-  if (!bounds) throw new Error("出力できる図形がありません");
+  const drawingBounds = dxfBounds(dxf.entities.filter(e => !hidden.has(e.layer)), preview, widths);
+  if (!drawingBounds) throw new Error("出力できる図形がありません");
+  const bounds = mode === "whole" ? drawingBounds
+    : mode === "viewport" ? viewBoundsInCad() : pdfRangeBounds;
+  if (!bounds) {
+    throw new Error("印刷範囲が未指定です。図面上で1点目と2点目をタップしてください。");
+  }
+  if (bounds.maxX - bounds.minX <= 1e-8 || bounds.maxY - bounds.minY <= 1e-8) {
+    throw new Error("印刷範囲が小さすぎます。2点を選び直してください。");
+  }
   const isLandscape = (bounds.maxX - bounds.minX) > (bounds.maxY - bounds.minY);
   const dimensions = paper === "A3" ? [841.89, 1190.55] : [595.28, 841.89];
   const pageW = isLandscape ? dimensions[1] : dimensions[0];
@@ -738,7 +769,8 @@ function cadPdfFile(paper: "A4" | "A3"): File {
   // Drawing is always printed on white; do not change the live black/white UI.
   drawDxf(ctx, width, height, dxf, {
     exportMode: true,
-    exportWhole: true,
+    exportWhole: mode === "whole",
+    exportBounds: bounds,
     backgroundOverride: "white",
     zoom: 1,
     panX: 0,
@@ -754,8 +786,10 @@ function cadPdfFile(paper: "A4" | "A3"): File {
   const jpeg = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) jpeg[i] = binary.charCodeAt(i);
   const pdf = pdfFromJpeg(jpeg, width, height, pageW, pageH);
+  const suffix = mode === "whole" ? "全体"
+    : mode === "viewport" ? "画面範囲" : "指定範囲";
   return new File([Uint8Array.from(pdf)], filenameStem() + "_" + paper +
-    (isLandscape ? "横" : "縦") + "_図面.pdf", { type: "application/pdf" });
+    (isLandscape ? "横" : "縦") + "_" + suffix + ".pdf", { type: "application/pdf" });
 }
 
 function updateShareControls(): void {
@@ -833,12 +867,170 @@ saveWhole2xButton.addEventListener("click", () => {
       " MB）を保存しました。失敗する機種では標準PNGをお使いください。");
   } catch (error) { shareStatus("2倍PNGの保存に失敗しました。標準PNGをお試しください：" + String(error)); }
 });
+
+/** V025: derive print bounds in the same CAD coordinate system as drawDxf. */
+function viewMapping(): {
+  bounds: Bounds;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
+} | null {
+  if (!parsedState) return null;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const dxf = parsedState.dxf, isJwc = !!dxf.jwc_conversion_report;
+  const hidden = new Set(isJwc ? dxf.layers.filter(l => l.frozen).map(l=>l.name) : []);
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  const widths = new Map<DxfEntity, number>();
+  let textIndex = 0;
+  for (const e of dxf.entities) {
+    if (e.type === "TEXT" && isJwc) {
+      widths.set(e, dxf.text_width_factors?.[textIndex++] ?? 1);
+    }
+  }
+  const bounds = dxfBounds(dxf.entities.filter(e=>!hidden.has(e.layer)), context, widths);
+  if (!bounds) return null;
+  const modelWidth = Math.max(1, bounds.maxX-bounds.minX);
+  const modelHeight = Math.max(1, bounds.maxY-bounds.minY);
+  const scale = Math.min((rect.width-56)/modelWidth,(rect.height-56)/modelHeight);
+  if (!Number.isFinite(scale) || scale <= 0) return null;
+  return {
+    bounds, scale, width:rect.width, height:rect.height,
+    offsetX:isJwc ? (rect.width-modelWidth*scale)/2 : 28,
+    offsetY:isJwc ? (rect.height-modelHeight*scale)/2 : 28,
+  };
+}
+function viewportPointToCad(p: {x:number;y:number}): {x:number;y:number} | null {
+  const m=viewMapping();
+  if (!m) return null;
+  const sx=(p.x-m.width/2-viewPanX)/viewZoom + m.width/2;
+  const sy=(p.y-m.height/2-viewPanY)/viewZoom + m.height/2;
+  return {
+    x:m.bounds.minX+(sx-m.offsetX)/m.scale,
+    y:m.bounds.minY+(m.height-m.offsetY-sy)/m.scale,
+  };
+}
+function cadPointToViewport(p: {x:number;y:number}): {x:number;y:number} | null {
+  const m=viewMapping();
+  if (!m) return null;
+  const sx=m.offsetX+(p.x-m.bounds.minX)*m.scale;
+  const sy=m.height-m.offsetY-(p.y-m.bounds.minY)*m.scale;
+  return {
+    x:m.width/2+viewPanX+(sx-m.width/2)*viewZoom,
+    y:m.height/2+viewPanY+(sy-m.height/2)*viewZoom,
+  };
+}
+function viewBoundsInCad(): Bounds | null {
+  const rect=canvas.getBoundingClientRect();
+  const p1=viewportPointToCad({x:0,y:0});
+  const p2=viewportPointToCad({x:rect.width,y:rect.height});
+  if (!p1 || !p2) return null;
+  return {minX:Math.min(p1.x,p2.x),minY:Math.min(p1.y,p2.y),
+    maxX:Math.max(p1.x,p2.x),maxY:Math.max(p1.y,p2.y)};
+}
+function resetPdfRangeOnNewDrawing(): void {
+  pdfRangeStart=null;
+  pdfRangeBounds=null;
+  updatePdfRangeUi();
+}
+function updatePdfRangeUi(): void {
+  const selecting = pdfRangeMode==="rectangle";
+  pdfRangeReselect.disabled=!parsedState;
+  pdfRangeIndicator.hidden=!selecting || !parsedState;
+  if (selecting) {
+    const label=pdfRangeBounds ? "選択済み。別の位置をタップすると再選択します。"
+      : pdfRangeStart ? "2点目（対角）をタップしてください"
+        : "1点目をタップしてください";
+    pdfRangeIndicator.textContent="PDF範囲指定：" + label;
+    pdfRangeStatus.textContent=label+" 図面は削除されません。";
+  } else if (pdfRangeMode==="viewport") {
+    pdfRangeStatus.textContent="PDF保存・共有を押した時点で、表示中の画面範囲を出力します。";
+  } else {
+    pdfRangeStatus.textContent="従来どおり図面全体をPDFにします。";
+  }
+}
+function handlePdfRangeTap(point: {x:number;y:number}): void {
+  const cad=viewportPointToCad(point);
+  if (!cad) return;
+  if (!pdfRangeStart || pdfRangeBounds) {
+    pdfRangeStart=cad;
+    pdfRangeBounds=null;
+  } else {
+    const a=pdfRangeStart;
+    const m=viewMapping();
+    const minSpan=m ? 12/(m.scale*viewZoom) : 0;
+    if (Math.abs(cad.x-a.x)<minSpan || Math.abs(cad.y-a.y)<minSpan) {
+      pdfRangeStatus.textContent="範囲が小さすぎます。もう少し離れた2点目をタップしてください。";
+      return;
+    }
+    pdfRangeBounds={
+      minX:Math.min(a.x,cad.x),maxX:Math.max(a.x,cad.x),
+      minY:Math.min(a.y,cad.y),maxY:Math.max(a.y,cad.y),
+    };
+  }
+  updatePdfRangeUi();
+  redrawZoom();
+}
+function drawPdfRangeOverlay(ctx:CanvasRenderingContext2D): void {
+  if (pdfRangeMode!=="rectangle") return;
+  ctx.save();
+  ctx.setLineDash([6,4]);
+  ctx.strokeStyle="#f59e0b";
+  ctx.fillStyle="rgba(245,158,11,.12)";
+  ctx.lineWidth=2;
+  if (pdfRangeBounds) {
+    const a=cadPointToViewport({x:pdfRangeBounds.minX,y:pdfRangeBounds.minY});
+    const b=cadPointToViewport({x:pdfRangeBounds.maxX,y:pdfRangeBounds.maxY});
+    if (a&&b) {
+      const left=Math.min(a.x,b.x),top=Math.min(a.y,b.y);
+      const w=Math.abs(b.x-a.x),h=Math.abs(b.y-a.y);
+      ctx.fillRect(left,top,w,h);
+      ctx.strokeRect(left,top,w,h);
+    }
+  } else if (pdfRangeStart) {
+    const a=cadPointToViewport(pdfRangeStart);
+    if (a) {
+      ctx.beginPath();
+      ctx.moveTo(a.x-14,a.y);ctx.lineTo(a.x+14,a.y);
+      ctx.moveTo(a.x,a.y-14);ctx.lineTo(a.x,a.y+14);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 function selectedPdfPaper(): "A4" | "A3" {
   return pdfPaperSelect.value === "A3" ? "A3" : "A4";
 }
+pdfRangeSelect.addEventListener("change", () => {
+  const next = pdfRangeSelect.value;
+  pdfRangeMode = next === "viewport" ? "viewport"
+    : next === "rectangle" ? "rectangle" : "whole";
+  updatePdfRangeUi();
+  redrawZoom();
+  if (pdfRangeMode === "rectangle") {
+    document.querySelector("#drawing-stage")?.scrollIntoView({
+      block: "center", behavior: "smooth",
+    });
+  }
+});
+pdfRangeReselect.addEventListener("click", () => {
+  pdfRangeStart = null;
+  pdfRangeBounds = null;
+  pdfRangeMode = "rectangle";
+  pdfRangeSelect.value = "rectangle";
+  updatePdfRangeUi();
+  redrawZoom();
+  document.querySelector("#drawing-stage")?.scrollIntoView({
+    block: "center", behavior: "smooth",
+  });
+});
 sharePdfButton.addEventListener("click", () => {
   try {
-    const file = cadPdfFile(selectedPdfPaper());
+    const file = cadPdfFile(selectedPdfPaper(), pdfRangeMode);
     void shareOrDownload(file);
   } catch (error) {
     shareStatus("PDF作成に失敗しました：" + String(error));
@@ -846,7 +1038,7 @@ sharePdfButton.addEventListener("click", () => {
 });
 savePdfButton.addEventListener("click", () => {
   try {
-    const file = cadPdfFile(selectedPdfPaper());
+    const file = cadPdfFile(selectedPdfPaper(), pdfRangeMode);
     saveFileLocally(file);
     shareStatus("PDF（" + selectedPdfPaper() + "、" + (file.size / 1048576).toFixed(2) +
       " MB）を保存しました。iPhoneのファイルアプリで確認できます。");
@@ -1050,6 +1242,7 @@ async function parseBytes(input: CurrentInput): Promise<void> {
   textRedoStack.length = 0;
   sharePanel.hidden = true;
   originalText.clear();
+  resetPdfRangeOnNewDrawing();
   nativeTextByDxfIndex.clear();
   nativeTextMatched = 0;
   nativeTextTotal = 0;
@@ -1216,6 +1409,7 @@ function renderPreview(state: ParsedState | null): void {
 
   meta.textContent = `${state.fileName} / ${state.cad.format === "jwc" ? (jwcCoordinates === "paper_millimeters" ? "紙上mm" : "実寸mm") : state.explodeInserts ? "exploded" : "inserted"}`;
   drawDxf(context, rect.width, rect.height, state.dxf);
+  drawPdfRangeOverlay(context);
 }
 
 function renderDetail(state: ParsedState | null): void {
@@ -1291,7 +1485,7 @@ function drawDxf(
   options: {
     exportMode?: boolean; exportWhole?: boolean; zoom?: number;
     panX?: number; panY?: number; padding?: number; strokePx?: number;
-    backgroundOverride?: "white" | "black";
+    backgroundOverride?: "white" | "black"; exportBounds?: Bounds;
   } = {},
 ): void {
   const exportMode = options.exportMode === true;
@@ -1317,7 +1511,7 @@ function drawDxf(
   const layersByName = new Map(dxf.layers.map(layer => [layer.name, layer] as const));
   let patternedCount = 0;
   let unknownCount = 0;
-  const bounds = dxfBounds(visible, context, widths);
+  const bounds = options.exportBounds ?? dxfBounds(visible, context, widths);
   if (!bounds) {
     drawEmptyPreview(context, width, height);
     return;
@@ -1341,6 +1535,12 @@ function drawDxf(
   // Jw_cad black canvas does not show the light-mode checking grid.
   if (!exportMode && canvasBackground === "white") drawGrid(context, width, height);
   context.save();
+  if (options.exportBounds) {
+    // Crop crossing lines, fills and text at the requested window.
+    context.beginPath();
+    context.rect(padding, padding, width-2*padding, height-2*padding);
+    context.clip();
+  }
   context.translate(width/2 + renderPanX, height/2 + renderPanY);
   context.scale(renderZoom, renderZoom);
   context.translate(-width/2, -height/2);
