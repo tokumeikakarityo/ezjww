@@ -1116,3 +1116,9 @@ h1 {
 .cad-share-result[hidden] {
   display: none !important;
 }
+
+/* V035: one PDF save/share action occupies the entire row on iPhone. */
+.cad-pdf-settings .cad-share-actions > button {
+  flex: 1 1 100%;
+  width: 100%;
+}
