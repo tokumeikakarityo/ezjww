@@ -1163,6 +1163,7 @@ let restoringWorkingSession = false;
 let recoveryFailureWasReported = false;
 let workingRecoveryPromise: Promise<void> | null = null;
 let userOpenedFile = false;
+let readingUserFile = false;
 let workingWriteRevision = 0;
 let lastWorkingSaveError = "";
 let leaveGuardArmed = false;
@@ -1334,7 +1335,11 @@ async function restoreWorkingSessionOnStartup(force=false):Promise<void> {
     if (force) showRecoveryProblemOnce(reason);
     return;
   }
-  if (!snapshot || userOpenedFile || currentInput) return;
+  // A Safari PDF viewer can return to an empty, partially initialized app.
+  // Force-recovery is allowed even if an earlier load left currentInput set,
+  // but never overwrite a healthy drawing or a file currently being read.
+  if (!snapshot || parsedState || readingUserFile ||
+      (!force && (userOpenedFile || currentInput))) return;
   if (snapshot.version!==1 || !snapshot.bytes ||
       !["string"].includes(typeof snapshot.fileName)) {
     setWorkingStatus("前回の一時保存データの形式が異なります。",true);
@@ -1627,14 +1632,19 @@ async function parseFile(file: File): Promise<void> {
     }
   }
   userOpenedFile = true;
-  resetZoom();
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  currentInput = {
-    name: file.name,
-    size: file.size,
-    bytes,
-  };
-  await parseBytes(currentInput);
+  readingUserFile = true;
+  try {
+    resetZoom();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    currentInput = {
+      name: file.name,
+      size: file.size,
+      bytes,
+    };
+    await parseBytes(currentInput);
+  } finally {
+    readingUserFile = false;
+  }
 }
 
 async function loadSample(): Promise<void> {
@@ -1741,7 +1751,9 @@ async function parseBytes(input: CurrentInput): Promise<void> {
     statusLine.textContent = `${input.name} / ${formatBytes(input.size)}`;
     render();
     updateNavigationProtection();
-    if (!restoringWorkingSession) queueWorkingSave();
+    // Wait for initial source-byte persistence before file loading is
+    // considered finished. Later PDF sharing cannot erase an unsaved source.
+    if (!restoringWorkingSession) await queueWorkingSave();
   } catch (error) {
     parsedState = null;
     statusLine.textContent = error instanceof Error ? error.message : String(error);
