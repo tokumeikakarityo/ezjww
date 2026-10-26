@@ -105,7 +105,7 @@ let nativeTextTotal = 0;
 app.innerHTML = `
   <header class="topbar">
     <div>
-      <div class="eyebrow">ezjww · V034</div>
+      <div class="eyebrow">ezjww · V035</div>
       <h1>JWW簡易CAD</h1>
     </div>
     <div class="actions">
@@ -152,8 +152,7 @@ app.innerHTML = `
         <span id="pdf-range-status" role="status" aria-live="polite" hidden></span>
       </div>
       <div class="cad-share-actions">
-        <button id="save-pdf" type="button">PDFを保存</button>
-        <button id="share-pdf" type="button">PDFを共有</button>
+        <button id="share-pdf" type="button">PDFを保存・共有</button>
       </div>
     </div>
     <p id="share-result" class="cad-share-result" role="status" aria-live="polite" hidden></p>
@@ -281,7 +280,6 @@ const pdfRangeExit = document.querySelector<HTMLButtonElement>("#pdf-range-exit"
 const pdfRangeStatus = document.querySelector<HTMLSpanElement>("#pdf-range-status")!;
 const pdfRangeIndicator = document.querySelector<HTMLDivElement>("#pdf-range-indicator")!;
 const sharePdfButton = document.querySelector<HTMLButtonElement>("#share-pdf")!;
-const savePdfButton = document.querySelector<HTMLButtonElement>("#save-pdf")!;
 const shareResult = document.querySelector<HTMLParagraphElement>("#share-result")!;
 const textEditPanel = document.querySelector<HTMLDivElement>("#text-edit-panel")!;
 const textEditInput = document.querySelector<HTMLInputElement>("#text-edit-input")!;
@@ -579,7 +577,10 @@ function mfcStringAt(bytes:Uint8Array,at:number,encoding:"shift_jis"|"utf-8"="sh
   const size=count*(unicode?2:1);
   if(!Number.isSafeInteger(size)||size<0||offset+size>bytes.length)return null;
   try {
-    const decoder=new TextDecoder(unicode?"utf-16le":encoding,{fatal:true});
+    // The Rust JWW parser uses non-fatal decoding with replacement and
+    // diagnostics; match its interpretation before strictly re-reading
+    // and verifying every unchanged entity in the output file.
+    const decoder=new TextDecoder(unicode?"utf-16le":encoding,{fatal:false});
     const content=decoder.decode(bytes.subarray(offset,offset+size)).replace(/\0+$/u,"");
     return {content,end:offset+size,unicode};
   }catch{return null;}
@@ -658,6 +659,8 @@ function editedJwwBytes(): Uint8Array {
     }
     const signature=nativeTextHeader(match);
     let found:JwwTextPatch|null=null,count=0;
+    let headerCount=0,fontCount=0,contentCount=0;
+    let ansiMatched=false,unicodeMatched=false;
     for(let offset=0;offset+signature.length+7<=raw.length;offset++){
       if(raw[offset]!==signature[0] || raw[offset+8]!==signature[8] ||
          raw[offset+32]!==signature[32] || raw[offset+60]!==signature[60])continue;
@@ -666,16 +669,34 @@ function editedJwwBytes(): Uint8Array {
         if(raw[offset+j]!==signature[j]){same=false;break;}
       }
       if(!same)continue;
+      headerCount++;
       const font=mfcStringAt(raw,offset+signature.length);
       if(!font || font.content!==match.fontName)continue;
+      fontCount++;
       const content=mfcStringAt(raw,font.end,sourceEncoding==="utf-8"?"utf-8":"shift_jis");
-      if(!content || content.content!==change.before || !content.unicode)continue;
+      if(!content || content.content!==change.before)continue;
+      contentCount++;
+      // V035: source JWW text may be CP932 (ANSI CString) even when its
+      // version is 700. V029 wrongly rejected ALL such strings.
+      // Replacing with a Unicode CString is valid for version-700 archives.
+      // The complete parsed drawing is verified before any file is offered.
+      if(content.unicode) unicodeMatched=true;
+      else ansiMatched=true;
       found={start:font.end,end:content.end,replacement:mfcUnicodeString(change.after),index:indexes[0]};
       count++;
       if(count>1)break;
     }
     if(count!==1||!found){
-      throw new Error("元JWW文字「"+change.before+"」のバイナリ位置が一意に照合できません。安全のため保存しません。");
+      const reason=count>1?"同じ候補が複数あります"
+        :headerCount===0?"文字の座標・寸法の記録が一致しません"
+        :fontCount===0?"フォント情報の記録が一致しません"
+        :contentCount===0?"文字列の格納形式が一致しません"
+        :"安全に確定できません";
+      throw new Error("元JWW文字「"+change.before+"」を特定できません（"+reason+"）。"+
+        "元図を守るため保存を中止しました。"+
+        "［座標:"+headerCount+"／フォント:"+fontCount+
+        "／文字:"+contentCount+"／UTF16:"+unicodeMatched+
+        "／CP932:"+ansiMatched+"］");
     }
     byEntity.set(found.index,change.after);
     patches.push(found);
@@ -871,7 +892,6 @@ function updateShareControls(): void {
   saveJwwButton.disabled = !loaded || parsedState?.cad.format !== "jww";
   openSharePanelButton.disabled = !loaded;
   sharePdfButton.disabled = !loaded;
-  savePdfButton.disabled = !loaded;
   pdfPaperSelect.disabled = !loaded;
   pdfRangeSelect.disabled = !loaded;
 }
@@ -1094,27 +1114,11 @@ sharePdfButton.addEventListener("click", () => {
   try {
     void queueWorkingSave();
     const file = cadPdfFile(selectedPdfPaper(), pdfRangeMode);
+    // On iPhone the share sheet offers both "ファイルに保存" and
+    // LINE/Gmail. No PDF Blob navigation and no duplicate save handler.
     void shareOrDownload(file);
   } catch (error) {
     shareStatus("PDF作成に失敗しました：" + String(error));
-  }
-});
-savePdfButton.addEventListener("click", () => {
-  if (!ensurePdfRangeSelected()) return;
-  try {
-    // iPhone: Open native share sheet so "ファイルに保存" does not
-    // navigate Safari to an in-browser PDF preview and reset CAD state.
-    void queueWorkingSave();
-    const file = cadPdfFile(selectedPdfPaper(), pdfRangeMode);
-    if (isIosBrowser()) {
-      shareStatus("iPhoneの共有画面で「ファイルに保存」を選んでください。");
-      void shareOrDownload(file);
-    } else {
-      saveFileLocally(file);
-      shareStatus("PDFを保存しました。");
-    }
-  } catch (error) {
-    shareStatus("PDF保存に失敗しました：" + String(error));
   }
 });
 /**
