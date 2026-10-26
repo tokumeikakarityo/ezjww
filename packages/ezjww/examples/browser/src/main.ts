@@ -105,7 +105,7 @@ let nativeTextTotal = 0;
 app.innerHTML = `
   <header class="topbar">
     <div>
-      <div class="eyebrow">ezjww · V033</div>
+      <div class="eyebrow">ezjww · V034</div>
       <h1>JWW簡易CAD</h1>
     </div>
     <div class="actions">
@@ -246,7 +246,7 @@ app.innerHTML = `
       <p id="leave-confirm-status" class="leave-confirm-status"></p>
       <div class="leave-confirm-actions">
         <button id="leave-stay" type="button">編集を続ける</button>
-        <button id="leave-save" type="button">一時保存して戻る</button>
+        <button id="leave-save" type="button">一時保存して前のページへ</button>
       </div>
       <small>端末内一時保存は元JWWの上書きではありません。JWW保存は別ファイルとして作成します。文字変更JWWは保存後にJw_cad 7.11で確認してください。</small>
     </div>
@@ -1491,8 +1491,17 @@ window.addEventListener("popstate",(event:PopStateEvent) => {
   if (!leaveGuardArmed) return;
   leaveGuardArmed=false;
   if (parsedState && !leavingAfterConfirmation) {
-    // V028: preserve even unchanged drawings on browser Back; users must
-    // choose to leave, rather than silently lose the opened CAD view.
+    // V034: Safari Back acts like the PDF panel's × on its FIRST press.
+    // The synthetic CAD history guard is then restored without navigating
+    // away, without showing the exit-confirmation modal, and without
+    // discarding the open JWW, its edits, zoom or selected PDF bounds.
+    if (!sharePanel.hidden) {
+      sharePanel.hidden = true;
+      updateNavigationProtection(); // re-arm the single Back guard
+      return;
+    }
+    // Only Back from the ordinary CAD view may ask whether to leave.
+    // This also protects drawings that have not been text-edited.
     void queueWorkingSave();
     showBackConfirmation();
   } else {
