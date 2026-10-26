@@ -2,7 +2,6 @@ import initWasm, {
   detectFileFormat,
   readCadDocument,
   readPreviewDxfDocument,
-  readEditedDxfString,
   readDxfString,
   newJwwDocument,
   toJwwBytes,
@@ -69,7 +68,7 @@ type TextHit = {
 let textHits: TextHit[] = [];
 let selectedTextIndex: number | null = null;
 let tapCandidate: { id: number; x: number; y: number; valid: boolean } | null = null;
-// V014: preview-only edits. DXF export remains the original conversion.
+// Text edits are tracked separately from immutable original JWW bytes.
 type TextChange = { index: number; before: string; after: string };
 const textUndoStack: TextChange[] = [];
 const textRedoStack: TextChange[] = [];
@@ -118,8 +117,6 @@ app.innerHTML = `
         <select id="coordinate-select"><option value="paper_millimeters">紙上mm</option><option value="model_millimeters">実寸mm</option></select>
       </label>
       <button id="save-jww" class="tool-button" type="button" disabled>JWW保存</button>
-      <button id="download-button" class="tool-button" type="button" disabled hidden style="display:none">DXF保存（原図）</button>
-      <button id="download-edited-dxf" class="tool-button" type="button" disabled hidden style="display:none">編集DXF保存</button>
       <button id="open-share-panel" class="tool-button" type="button" disabled>PDF保存(共有等)</button>
       <button id="sample-button" class="tool-button" type="button" hidden>サンプル読込</button>
       <button id="create-button" class="tool-button" type="button" hidden>JWW作成例</button>
@@ -271,8 +268,6 @@ const sampleButton = document.querySelector<HTMLButtonElement>("#sample-button")
 const canvas = document.querySelector<HTMLCanvasElement>("#preview-canvas")!;
 const coordinateSelect = document.querySelector<HTMLSelectElement>("#coordinate-select")!;
 const saveJwwButton = document.querySelector<HTMLButtonElement>("#save-jww")!;
-const downloadButton = document.querySelector<HTMLButtonElement>("#download-button")!;
-const downloadEditedDxf = document.querySelector<HTMLButtonElement>("#download-edited-dxf")!;
 const createButton = document.querySelector<HTMLButtonElement>("#create-button")!;
 const downloadJwwButton = document.querySelector<HTMLButtonElement>("#download-jww-button")!;
 const openSharePanelButton = document.querySelector<HTMLButtonElement>("#open-share-panel")!;
@@ -457,18 +452,6 @@ coordinateSelect.addEventListener("change", () => {
   jwcCoordinates = coordinateSelect.value as JwcCoordinateSpace;
   void reparseCurrentInput();
 });
-downloadButton.addEventListener("click", () => {
-  if (!parsedState) return;
-  const url = URL.createObjectURL(new Blob([parsedState.dxfText], { type: "application/dxf" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = parsedState.fileName.replace(/\.[^.]*$/, "") + ".dxf";
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-});
-
-
-
 /**
  * V022: native iOS share sheet integration.
  *
@@ -1505,32 +1488,6 @@ function effectiveTextChanges(): Array<OriginalText & { after: string }> {
   }
   return changes;
 }
-function saveDownload(content: string, filename: string): void {
-  const url = URL.createObjectURL(new Blob([content], { type: "application/dxf" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-downloadEditedDxf.addEventListener("click", () => {
-  if (!parsedState || !currentInput) return;
-  const changes = effectiveTextChanges();
-  if (!changes.length) return;
-  try {
-    // Export from the original JWW, validating each changed text against the
-    // unfiltered CAD conversion. Auxiliary geometry is never deleted here.
-    const edited = readEditedDxfString(currentInput.bytes, explodeInserts, changes);
-    const filename = parsedState.fileName.replace(/\.[^.]*$/, "") + "_文字変更.dxf";
-    saveDownload(edited, filename);
-    textEditNote.textContent = "編集済DXFを別名で保存しました。原JWWは変更していません。";
-  } catch (error) {
-    const description = error instanceof Error ? error.message : String(error);
-    textEditNote.textContent = "編集DXF保存に失敗：" + description;
-    alert("編集DXF保存に失敗しました。データは変更されていません。\n" + description);
-  }
-});
-
 window.addEventListener("resize", redrawZoom);
 void ensureWasm().then(async () => {
   if (!parsedState) statusLine.textContent = "待機中";
@@ -1743,8 +1700,6 @@ function render(): void {
   renderMetrics(parsedState);
   renderCounts(parsedState);
   renderLayers(parsedState?.cad ?? null);
-  downloadButton.disabled = !parsedState;
-  downloadEditedDxf.disabled = !parsedState || parsedState.cad.format !== "jww" || effectiveTextChanges().length === 0;
   downloadJwwButton.disabled = !parsedState?.generatedJww;
   updateShareControls();
   coordinateSelect.disabled = parsedState?.cad.format !== "jwc";
@@ -2488,7 +2443,6 @@ function updateTextEditControls(): void {
   textEditUndo.disabled = textUndoStack.length === 0;
   textEditRedo.disabled = textRedoStack.length === 0;
   textEditClear.disabled = !entity;
-  downloadEditedDxf.disabled = !parsedState || parsedState.cad.format !== "jww" || effectiveTextChanges().length === 0;
   updateShareControls();
 }
 function syncTextEditPanel(): void {
