@@ -641,7 +641,12 @@ function editedJwwBytes(): Uint8Array {
   if(currentUnappliedText()) {
     throw new Error("入力中の文字があります。「文字変更」で確定してからJWW保存してください。");
   }
-  const changes=effectiveTextChanges();
+  // Preserve the DXF exporter contract: its changes have no index field.
+  // The native JWW writer alone uses the index from the originalText Map.
+  const changes=Array.from(originalText,([index,original])=>{
+    const entity=parsedState!.dxf.entities[index];
+    return {index,...original,after:entity?.type==="TEXT" ? entity.content : original.before};
+  }).filter(c=>typeof c.after==="string" && c.after!==c.before);
   if(changes.length===0) {
     return Uint8Array.from(currentInput.bytes);
   }
@@ -652,6 +657,7 @@ function editedJwwBytes(): Uint8Array {
     throw new Error("変更済JWWの安全保存はJWW形式700のみ対応です。元図JWW保存またはPDFをご使用ください。");
   }
   const raw=currentInput.bytes;
+  const sourceEncoding=(doc as unknown as {text_encoding?:string}).text_encoding;
   const byEntity=new Map<number,string>();
   const patches:JwwTextPatch[]=[];
   for(const change of changes){
@@ -685,7 +691,7 @@ function editedJwwBytes(): Uint8Array {
       if(!same)continue;
       const font=mfcStringAt(raw,offset+signature.length);
       if(!font || font.content!==match.fontName)continue;
-      const content=mfcStringAt(raw,font.end,doc.text_encoding==="utf-8"?"utf-8":"shift_jis");
+      const content=mfcStringAt(raw,font.end,sourceEncoding==="utf-8"?"utf-8":"shift_jis");
       if(!content || content.content!==change.before || !content.unicode)continue;
       found={start:font.end,end:content.end,replacement:mfcUnicodeString(change.after),index:indexes[0]};
       count++;
@@ -714,9 +720,11 @@ function editedJwwBytes(): Uint8Array {
   if(reread.format!=="jww")throw new Error("保存結果をJWWとして再読込できません。");
   const rd=reread.document;
   const equal=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
+  const sourceObj=doc as unknown as Record<string,unknown>;
+  const verifyObj=rd as unknown as Record<string,unknown>;
   for(const key of ["header","block_defs","images","entity_counts",
     "block_def_names","validation","metadata_settings"] as const){
-    if(!equal(doc[key],rd[key]))throw new Error(
+    if(!equal(sourceObj[key],verifyObj[key]))throw new Error(
       "元図の情報（"+key+"）が一致しないため保存を拒否しました。");
   }
   if(doc.entities.length!==rd.entities.length)throw new Error("図形数が変化するため保存を中止しました。");
