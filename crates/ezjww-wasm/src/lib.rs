@@ -14,7 +14,9 @@ use ezjww_core::{
 pub fn encode_cp932_string(value: &str) -> Result<Vec<u8>, JsValue> {
     let (bytes, _, had_errors) = encoding_rs::SHIFT_JIS.encode(value);
     if had_errors {
-        return Err(js_error("CP932で表現できない文字があります。Jw_cad 7.11互換のため保存を中止します。"));
+        return Err(js_error(
+            "CP932で表現できない文字があります。Jw_cad 7.11互換のため保存を中止します。",
+        ));
     }
     Ok(bytes.into_owned())
 }
